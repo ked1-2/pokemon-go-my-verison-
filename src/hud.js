@@ -2,10 +2,11 @@ import { BALLS, Bar, displayName, loadSprites, text, textureKey } from './ui.js'
 
 const SLOT_W = 66
 
-// Top bar shared by the lobby and the arena: active Pokémon, party slots 1-4, score and balls.
+// Top bar shared by the lobby and the arena: active Pokémon, party slots 1-4, score, clock and balls.
 export class Hud {
-  constructor(scene, { onSlot } = {}) {
+  constructor(scene, { onSlot, onTime } = {}) {
     this.scene = scene
+    this.onTime = onTime
     scene.add.rectangle(400, 35, 800, 70, 0x14213d)
 
     this.name = text(scene, 16, 8, '', { fontSize: '15px', fontStyle: 'bold' })
@@ -26,6 +27,8 @@ export class Hud {
     })
 
     this.score = text(scene, 786, 8, '', { fontSize: '14px', fontStyle: 'bold', color: '#ffd54f' }).setOrigin(1, 0)
+    this.clock = text(scene, 786, 24, '', { fontSize: '11px' }).setOrigin(1, 0)
+    scene.time.addEvent({ delay: 1000, loop: true, callback: () => this.tick() })
     this.balls = BALLS.map((b, i) => {
       const x = 604 + i * 62
       scene.add.circle(x, 46, 7, b.color).setStrokeStyle(1, 0xffffff)
@@ -42,6 +45,9 @@ export class Hud {
     this.xpText.setText(`XP ${p.xp}/${p.xpNext}`)
     this.score.setText(`Score ${state.score}`)
     BALLS.forEach((b, i) => this.balls[i].setText(`×${state.balls[b.key]}`))
+    this.time = state.time
+    this.timeAt = Date.now()
+    this.tick()
 
     loadSprites(this.scene, state.party).then(() => {
       this.slots.forEach((slot, i) => {
@@ -58,6 +64,26 @@ export class Hud {
         slot.bar.set(m.hp, m.maxHp)
       })
     })
+  }
+
+  // Counts down locally between server updates, flipping day/night when the timer runs out.
+  tick() {
+    if (!this.time) return
+    const { dayMs, nightMs } = this.time
+    let night = this.time.night
+    let left = this.time.msLeft - (Date.now() - this.timeAt)
+    while (left <= 0) {
+      night = !night
+      left += night ? nightMs : dayMs
+    }
+    const secs = Math.ceil(left / 1000)
+    const mmss = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+    this.clock.setText(night ? `☾ Night · day in ${mmss}` : `☀ Day · night in ${mmss}`).setColor(night ? '#b39ddb' : '#ffe082')
+    if (night !== this.night) {
+      const changed = this.night !== undefined
+      this.night = night
+      this.onTime?.(night, changed)
+    }
   }
 }
 

@@ -17,6 +17,7 @@ const NPC_SPECIES = [
 
 const TIPS = {
   pikachu: [
+    'Pika! Every Pokémon you eliminate makes the next wild ones 2 levels higher.',
     'Pika! Ghost types shrug off Normal and Fighting moves. Try another ability!',
     'Pika pika! Flying types float right over Ground moves.',
     'Fairy types are immune to Dragon moves. Switch with 1-4 if you get stuck!',
@@ -25,6 +26,7 @@ const TIPS = {
     'Vee! Shiny Pokémon sparkle. They are rare, stronger, and harder to catch.',
     'The higher a wild Pokémon\'s level, the harder it is to catch. Lv 50s barely fit in a ball!',
     'Epic and legendary Pokémon roam the arena sometimes. Press Q to run if they are too strong.',
+    'Vee~ At night wild Pokémon get stronger, but shinies show up much more often!',
   ],
   jigglypuff: [
     'Jiggly~ Get a wild Pokémon below 30% HP, then press X to throw a ball.',
@@ -234,7 +236,7 @@ export class LobbyScene extends Phaser.Scene {
         const s = this.add.star(150 + Phaser.Math.Between(-60, 60), 260, 4, 3, 8, 0xf48fb1).setDepth(20)
         this.tweens.add({ targets: s, y: 170, alpha: 0, angle: 180, delay: i * 50, duration: 700, onComplete: () => s.destroy() })
       }
-      this.dialog(`Chansey: Your team is fully healed! I also restocked your Poké Balls to ${this.state.balls.regular}. ♥`)
+      this.dialog(`Chansey: Your team is fully healed! I also restocked all your balls. ♥`)
     })
   }
 
@@ -308,6 +310,7 @@ export class LobbyScene extends Phaser.Scene {
       ['Shinies caught', shinies],
       ['Eliminated', s.eliminated.length],
       ['Blackouts', s.blackouts],
+      ['Wild level bonus', `+${s.levelBonus}`],
       ['Rarest catch', rarest ? `${rarest.shiny ? '★ ' : ''}${capitalize(rarest.name)} Lv ${rarest.level} (${rarest.rarity})` : 'none yet'],
       ['Balls', BALLS.map((b) => `${b.name} ×${s.balls[b.key]}`).join('\n')],
     ]

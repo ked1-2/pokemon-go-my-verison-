@@ -32,7 +32,11 @@ export class ArenaScene extends Phaser.Scene {
 
     this.drawField()
     this.physics.world.setBounds(0, this.fieldTop, width, this.fieldBottom - this.fieldTop)
-    this.hud = new Hud(this, { onSlot: (i) => this.swap(i) })
+    this.nightShade = this.add
+      .rectangle(width / 2, (this.fieldTop + this.fieldBottom) / 2, width, this.fieldBottom - this.fieldTop, 0x0b1033)
+      .setAlpha(0)
+      .setDepth(4)
+    this.hud = new Hud(this, { onSlot: (i) => this.swap(i), onTime: (night, changed) => this.setNight(night, changed) })
     this.cameras.main.fadeIn(300)
 
     this.cursors = this.input.keyboard.createCursorKeys()
@@ -89,7 +93,17 @@ export class ArenaScene extends Phaser.Scene {
     this.tweens.add({ targets: this.wild, alpha: 1, duration: 400 })
     this.wanderTarget = null
     this.wanderAt = this.time.now + WANDER_PAUSE_MS[1]
-    this.wildLabel.setText(`${displayName(w)}  Lv ${w.level}`).setColor(RARITY_COLORS[w.rarity])
+    this.wildLabel.setText(`${w.night ? '☾ ' : ''}${displayName(w)}  Lv ${w.level}`).setColor(RARITY_COLORS[w.rarity])
+  }
+
+  setNight(night, changed) {
+    this.tweens.add({ targets: this.nightShade, alpha: night ? 0.45 : 0, duration: changed ? 1500 : 0 })
+    if (!changed || this.mode !== 'explore') return
+    this.message.setText(
+      night
+        ? 'Night has fallen... new wild Pokémon are stronger, and shinies appear far more often!'
+        : 'The sun rises. Wild Pokémon are back to normal strength.',
+    )
   }
 
   shinySparkle() {
@@ -106,7 +120,8 @@ export class ArenaScene extends Phaser.Scene {
     this.panel.removeAll(true)
     const w = this.state.wild
     const tag = `${w.shiny ? 'SHINY ' : ''}${w.rarity === 'common' ? '' : `${w.rarity.toUpperCase()} `}`
-    this.message.setText(msg ?? `A wild ${tag}${displayName(w).replace('★ ', '')} (Lv ${w.level}) is roaming! Press E to fight.`)
+    const empowered = w.night ? ' It is empowered by the night!' : ''
+    this.message.setText(msg ?? `A wild ${tag}${displayName(w).replace('★ ', '')} (Lv ${w.level}) is roaming!${empowered} Press E to fight.`)
 
     const opts = [
       { label: 'FIGHT! [E]', color: '#c62828', action: () => this.fight() },

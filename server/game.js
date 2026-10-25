@@ -24,6 +24,17 @@ const SHINY_CHANCE = 1 / 40
 const SHINY_CATCH = 0.6 // shinies are 40% harder to catch
 const SHINY_STAT_BONUS = 1.1
 
+// Day/night cycle, counted from the start of each trial. Wild Pokémon that
+// spawn at night are stronger and far more likely to be shiny.
+const DAY_MS = 3 * 60 * 1000
+const NIGHT_MS = 2 * 60 * 1000
+const NIGHT_STAT_BONUS = 1.25
+const NIGHT_SHINY_CHANCE = 1 / 8
+
+// Every elimination makes later wild Pokémon tougher.
+const LEVELS_PER_ELIMINATION = 2
+const MAX_LEVEL = 100
+
 // Attack type → defending types that take no damage from it.
 export const IMMUNITIES = {
   normal: ['ghost'],
@@ -75,13 +86,12 @@ const WILD_STRONG_CHANCE = 0.3
 
 const START_LEVEL = 20
 // Starters are boosted to these stats at START_LEVEL, scaling up as they level.
-const STARTER_STATS = { maxHp: 400, attack: 300 }
+const STARTER_STATS = { maxHp: 300, attack: 200 }
 const PARTY_SIZE = 4
 const UPGRADE_LEVELS = 5
 const BLACKOUT_PENALTY = 150
 const WIN_HEAL = 0.25
 const CATCH_HP_RATIO = 0.3 // wild HP must be at or below this to throw a ball mid-battle
-const HEAL_BALL_REFILL = 6 // the Healing Center tops Poké Balls back up to this
 
 const cache = new Map()
 
@@ -150,10 +160,11 @@ function movesFor(species) {
   return SLOTS.map((slot, i) => ({ ...slot, name: named[i]?.[0] ?? 'Recover', type: named[i]?.[1] ?? 'normal' }))
 }
 
-function makeFighter(species, level, { shiny = false, rarity = null } = {}) {
-  const base = shiny
-    ? Object.fromEntries(Object.entries(species.base).map(([k, v]) => [k, Math.round(v * SHINY_STAT_BONUS)]))
-    : species.base
+function makeFighter(species, level, { shiny = false, night = false, rarity = null } = {}) {
+  const boost = (shiny ? SHINY_STAT_BONUS : 1) * (night ? NIGHT_STAT_BONUS : 1)
+  const base = boost === 1
+    ? species.base
+    : Object.fromEntries(Object.entries(species.base).map(([k, v]) => [k, Math.round(v * boost)]))
   const stats = statsAt(base, level)
   const moves = movesFor(species)
   return {
@@ -166,6 +177,7 @@ function makeFighter(species, level, { shiny = false, rarity = null } = {}) {
     base,
     level,
     shiny,
+    night,
     rarity,
     ...stats,
     hp: stats.maxHp,
@@ -197,6 +209,14 @@ export function catchChance(ballKey, wild) {
   const chance = BALLS[ballKey].chance * levelFactor * RARITIES[wild.rarity].catch * (wild.shiny ? SHINY_CATCH : 1)
   return Math.min(0.95, Math.max(0.01, chance))
 }
+
+function clock(s) {
+  const t = (Date.now() - s.startedAt) % (DAY_MS + NIGHT_MS)
+  const night = t >= DAY_MS
+  return { night, msLeft: night ? DAY_MS + NIGHT_MS - t : DAY_MS - t }
+}
+
+const levelBonus = (s) => s.eliminated.length * LEVELS_PER_ELIMINATION
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
 const between = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1))
@@ -273,8 +293,10 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
       box: s.box.map(memberView),
       wild: w && {
         id: w.id, name: w.name, types: w.types, sprite: w.sprite, level: w.level, hp: w.hp, maxHp: w.maxHp,
-        baseSpeed: w.base.speed, shiny: w.shiny, rarity: w.rarity,
+        baseSpeed: w.base.speed, shiny: w.shiny, night: w.night, rarity: w.rarity,
       },
+      time: { ...clock(s), dayMs: DAY_MS, nightMs: NIGHT_MS },
+      levelBonus: levelBonus(s),
       abilities: p.moves.map((m, i) => ({
         name: m.name, type: m.type, kind: m.kind, power: m.power, accuracy: m.accuracy,
         pp: p.pp[i], maxPp: m.pp, noEffect: Boolean(w && m.kind !== 'heal' && immune(m.type, w)),
@@ -297,7 +319,10 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
     const rarity = rollRarity()
     const r = RARITIES[rarity]
     const species = await fetchPokemon(pick(r.ids))
-    s.wild = makeFighter(species, between(...r.levels), { shiny: Math.random() < SHINY_CHANCE, rarity })
+    const { night } = clock(s)
+    const level = Math.min(MAX_LEVEL, between(...r.levels) + levelBonus(s))
+    const shiny = Math.random() < (night ? NIGHT_SHINY_CHANCE : SHINY_CHANCE)
+    s.wild = makeFighter(species, level, { shiny, night, rarity })
     s.phase = 'explore'
   }
 
@@ -380,6 +405,7 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
       if (!STARTERS.includes(starter)) throw new GameError('Pick one of the four starters')
       const s = {
         id: randomUUID(),
+        startedAt: Date.now(),
         party: [makeStarter(await fetchPokemon(starter))],
         box: [],
         active: 0,
@@ -428,7 +454,7 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
         m.fainted = false
         m.pp = m.moves.map((mv) => mv.pp)
       }
-      s.balls.regular = Math.max(s.balls.regular, HEAL_BALL_REFILL)
+      for (const [k, b] of Object.entries(BALLS)) s.balls[k] = Math.max(s.balls[k], b.start)
       return view(s)
     },
 

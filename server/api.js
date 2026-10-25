@@ -12,6 +12,7 @@ const ROUTES = {
   'POST /api/equip': (game, body) => game.equip(body),
   'POST /api/unequip': (game, body) => game.unequip(body),
   'POST /api/battle': (game, body) => game.battle(body),
+  'POST /api/spawn': (game, body) => game.spawn(body),
   'POST /api/attack': (game, body) => game.attack(body),
   'POST /api/switch': (game, body) => game.switch(body),
   'POST /api/run': (game, body) => game.run(body),

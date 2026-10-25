@@ -1,8 +1,8 @@
-import { BALLS, Bar, displayName, loadSprites, setAura, text, textureKey } from './ui.js'
+import { BALLS, Bar, PARTY_SIZE, displayName, loadSprites, setAura, text, textureKey } from './ui.js'
 
 const SLOT_W = 66
 
-// Top bar shared by the lobby and the arena: active Pokémon, party slots 1-4, score, clock and balls.
+// Top bar shared by the lobby and the arena: active Pokémon, party slots, score, clock and balls.
 export class Hud {
   constructor(scene, { onSlot, onTime } = {}) {
     this.scene = scene
@@ -15,7 +15,7 @@ export class Hud {
     this.xp = new Bar(scene, 16, 52, 170, 6, { kind: 'xp' })
     this.xpText = text(scene, 194, 47, '', { fontSize: '11px', color: '#90caf9' })
 
-    this.slots = [0, 1, 2, 3].map((i) => {
+    this.slots = Array.from({ length: PARTY_SIZE }, (_, i) => i).map((i) => {
       const x = 300 + i * (SLOT_W + 6)
       const frame = scene.add.rectangle(x + SLOT_W / 2, 35, SLOT_W, 60, 0x1e2a4a).setStrokeStyle(2, 0x3949ab)
       frame.setInteractive({ useHandCursor: true }).on('pointerdown', () => onSlot?.(i))

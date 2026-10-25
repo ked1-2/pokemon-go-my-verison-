@@ -3,10 +3,13 @@ import Phaser from 'phaser'
 export const FONT = 'Verdana, Geneva, sans-serif'
 
 export const BALLS = [
-  { key: 'regular', name: 'Poké Ball', chance: 50, hotkey: '1', color: 0xe53935 },
-  { key: 'legendary', name: 'Legend Ball', chance: 70, hotkey: '2', color: 0xffb300 },
-  { key: 'master', name: 'Master Ball', chance: 90, hotkey: '3', color: 0x8e24aa },
+  { key: 'regular', name: 'Poké Ball', hotkey: '1', color: 0xe53935 },
+  { key: 'legendary', name: 'Legend Ball', hotkey: '2', color: 0xffb300 },
+  { key: 'master', name: 'Master Ball', hotkey: '3', color: 0x8e24aa },
 ]
+
+export const PARTY_SIZE = 3
+export const PARTY_KEYS = Array.from({ length: PARTY_SIZE }, (_, i) => String(i + 1))
 
 export const capitalize = (s) =>
   s

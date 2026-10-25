@@ -20,3 +20,22 @@ const game = new Phaser.Game({
 
 // Handy for poking at the game from the browser console during development.
 if (import.meta.env.DEV) window.__game = game
+
+// Playtest helper: `arena.spawn(150)` (optionally `arena.spawn(150, 40)` for a level) starts a
+// battle against that Pokédex number. Works while walking around the arena; the server only
+// allows it locally or on a deploy with PLAYTEST=1.
+window.arena = {
+  async spawn(id, level) {
+    if (!game.scene.isActive('arena')) {
+      console.warn('arena.spawn: enter the arena first.')
+      return
+    }
+    try {
+      const wild = await game.scene.getScene('arena').playtestSpawn(id, level)
+      console.log(`arena.spawn: battling ${wild.name} (#${wild.id}) Lv ${wild.level}, capture rate ${wild.captureRate}/255`)
+      return wild
+    } catch (err) {
+      console.error(`arena.spawn: ${err.message}`)
+    }
+  },
+}

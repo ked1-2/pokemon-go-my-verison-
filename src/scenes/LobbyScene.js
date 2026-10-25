@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { api } from '../api.js'
 import { Hud } from '../hud.js'
 import { showUpgradeCards } from '../upgradeCards.js'
-import { AURA_COLOR, BALLS, RARITY_COLORS, TYPE_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
+import { AURA_COLOR, BALLS, PARTY_KEYS, PARTY_SIZE, RARITY_COLORS, TYPE_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
 
 const PANEL_TOP = 490
 const FIELD_TOP = 70
@@ -37,8 +37,8 @@ const TIPS = {
   jigglypuff: [
     'Jiggly~ Watch out for TITANS! They are huge bosses, but every Pokémon you own fights them with you.',
     'Jiggly~ Catch a Titan and it glows with an aura that makes your whole team stronger!',
-    'Jiggly~ Get a wild Pokémon below 30% HP, then press X to throw a ball.',
-    'Your party holds 4 Pokémon. Extra catches go to the box in the Stats Hall.',
+    'Jiggly~ Get a wild Pokémon below 20% HP, then press C to catch it. Common Pokémon are easy, legendaries almost need a Master Ball!',
+    'Your team holds 3 Pokémon. Extra catches go to the box. Swap them in from the Pokédex EQUIP tab!',
     'If your whole team hits 0 HP, it is GAME OVER and your score is final. Heal with Chansey often!',
   ],
 }
@@ -183,7 +183,7 @@ export class LobbyScene extends Phaser.Scene {
   onKey(key) {
     if (this.mode === 'walk') {
       if (key === 'e' && this.target) this.target.action()
-      else if (['1', '2', '3', '4'].includes(key)) this.swap(Number(key) - 1)
+      else if (PARTY_KEYS.includes(key)) this.swap(Number(key) - 1)
       else if (key === 'p') this.openDex()
     } else if (this.mode === 'dialog' && (key === 'e' || key === ' ' || key === 'escape')) {
       this.walk()
@@ -467,14 +467,14 @@ export class LobbyScene extends Phaser.Scene {
     const perPage = 8
     this.dexPages = Math.max(1, Math.ceil(s.box.length / perPage))
     this.dexPage = Math.min(this.dexPage, this.dexPages - 1)
-    const full = s.party.length >= 4
+    const full = s.party.length >= PARTY_SIZE
     const hint = this.dexHint ?? (this.equipPick
       ? 'Party is full: pick a party slot to swap with.'
       : 'Equip caught Pokémon into your party, or send party members to the box.')
     layer.add(text(this, 400, 80, hint, { fontSize: '13px', color: this.dexHint ? '#ef9a9a' : '#d1c4e9' }).setOrigin(0.5, 0))
 
-    layer.add(text(this, 22, 100, `PARTY (${s.party.length}/4)`, { fontSize: '13px', fontStyle: 'bold', color: '#b39ddb' }))
-    for (let i = 0; i < 4; i++) {
+    layer.add(text(this, 22, 100, `PARTY (${s.party.length}/${PARTY_SIZE})`, { fontSize: '13px', fontStyle: 'bold', color: '#b39ddb' }))
+    for (let i = 0; i < PARTY_SIZE; i++) {
       const m = s.party[i]
       const y = 120 + i * 108
       layer.add(this.add.rectangle(22, y, 350, 100, 0x2a1f4d).setOrigin(0).setStrokeStyle(2, i === s.active ? 0xffd54f : 0x5e35b1))

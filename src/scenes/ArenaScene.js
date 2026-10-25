@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { api } from '../api.js'
 import { Hud } from '../hud.js'
 import { showUpgradeCards } from '../upgradeCards.js'
-import { Bar, RARITY_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
+import { Bar, RARITY_COLORS, bake, button, capitalize, displayName, loadSprites, PARTY_KEYS, setAura, text, textureKey } from '../ui.js'
 
 const HUD_HEIGHT = 70
 const PANEL_HEIGHT = 110
@@ -147,7 +147,7 @@ export class ArenaScene extends Phaser.Scene {
     if (this.mode !== 'explore') return
     if (key === 'e') this.fight()
     else if (key === 'l') this.toLobby()
-    else if (['1', '2', '3', '4'].includes(key)) this.swap(Number(key) - 1)
+    else if (PARTY_KEYS.includes(key)) this.swap(Number(key) - 1)
   }
 
   async run(task) {
@@ -217,14 +217,38 @@ export class ArenaScene extends Phaser.Scene {
     if (this.mode !== 'explore') return
     return this.run(async () => {
       this.message.setText('Battle!')
-      const state = await api.battle(this.state.sessionId)
-      const cam = this.cameras.main
-      cam.flash(250, 255, 255, 255)
-      cam.pan(this.wild.x, this.wild.y, 400, 'Cubic.easeIn')
-      await new Promise((resolve) => cam.zoomTo(2.2, 400, 'Cubic.easeIn', false, (c, t) => t === 1 && resolve()))
-      this.scene.sleep() // a sleeping scene is neither updated nor rendered
-      this.scene.launch('battle', { state, onEnd: (r) => this.onBattleEnd(r) })
+      await this.startBattle(await api.battle(this.state.sessionId))
     })
+  }
+
+  // Playtest: swap in any species as the wild Pokémon and go straight into battle.
+  async playtestSpawn(id, level) {
+    if (this.mode !== 'explore') throw new Error('Wait until you can move around the arena, then try again')
+    this.mode = 'busy'
+    this.player.setVelocity(0, 0)
+    let state
+    try {
+      state = await api.spawn(this.state.sessionId, id, level)
+    } catch (err) {
+      this.explore()
+      throw err
+    }
+    this.state = state
+    await loadSprites(this, [state.wild])
+    this.spawnWild()
+    this.message.setText(`Playtest: a wild ${displayName(state.wild)} (Lv ${state.wild.level}) appeared!`)
+    await this.startBattle(state)
+    return state.wild
+  }
+
+  // Zooms into the wild Pokémon and hands over to the battle scene.
+  async startBattle(state) {
+    const cam = this.cameras.main
+    cam.flash(250, 255, 255, 255)
+    cam.pan(this.wild.x, this.wild.y, 400, 'Cubic.easeIn')
+    await new Promise((resolve) => cam.zoomTo(2.2, 400, 'Cubic.easeIn', false, (c, t) => t === 1 && resolve()))
+    this.scene.sleep() // a sleeping scene is neither updated nor rendered
+    this.scene.launch('battle', { state, onEnd: (r) => this.onBattleEnd(r) })
   }
 
   async onBattleEnd({ state, outcome, message }) {

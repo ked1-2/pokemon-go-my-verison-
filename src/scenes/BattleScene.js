@@ -87,7 +87,7 @@ export class BattleScene extends Phaser.Scene {
     ])
     if (rarityTag) this.wildBox.add(text(this, 308, 60, '◆', { fontSize: '12px', color: RARITY_COLORS[w.rarity], stroke: '#263238', strokeThickness: 2 }).setOrigin(1, 0))
     this.wildHp = new Bar(this, 68, 88, 236, 10).set(w.hp, w.maxHp)
-    this.catchBadge = text(this, 174, 122, 'LOW HP: PRESS X TO CATCH!', {
+    this.catchBadge = text(this, 174, 122, 'LOW HP: PRESS C TO CATCH!', {
       fontSize: '12px',
       fontStyle: 'bold',
       color: '#ffffff',
@@ -218,7 +218,7 @@ export class BattleScene extends Phaser.Scene {
     const low = this.state.catchable
     this.catchBadge.setVisible(low)
     const p = this.state.player
-    this.message.setText(low ? `${displayName(this.state.wild)} is weak! Press X to catch it, or keep attacking.` : `What will ${displayName(p)} do?  (Ability: ${p.ability.name})`)
+    this.message.setText(low ? `${displayName(this.state.wild)} is below 20% HP! Press C to catch it, or keep attacking.` : `What will ${displayName(p)} do?  (Ability: ${p.ability.name})`)
 
     const opts = this.state.abilities.map((a, i) => {
       const hex = `#${(TYPE_COLORS[a.type] ?? 0x1565c0).toString(16).padStart(6, '0')}`
@@ -233,7 +233,7 @@ export class BattleScene extends Phaser.Scene {
     })
     const canSwitch = this.state.party.some((m, i) => i !== this.state.active && !m.fainted)
     opts.push(
-      { label: 'CATCH [X]', key: 'x', x: RIGHT_COL_X, y: 498, width: 170, color: '#c62828', disabled: !low, pulse: true, action: () => this.ballMenu() },
+      ...(low ? [{ label: 'CATCH [C]', key: 'c', x: RIGHT_COL_X, y: 498, width: 170, color: '#c62828', pulse: true, action: () => this.ballMenu() }] : []),
       { label: 'SWITCH [S]', key: 's', x: RIGHT_COL_X, y: 536, width: 170, color: '#00838f', disabled: !canSwitch, action: () => this.partyMenu(false) },
       { label: 'RUN [Q]', key: 'q', x: RIGHT_COL_X, y: 574, width: 170, color: '#455a64', action: () => this.runAway() },
     )
@@ -243,7 +243,8 @@ export class BattleScene extends Phaser.Scene {
   ballMenu() {
     const back = this.mode === 'won' ? () => this.wonMenu() : () => this.choose()
     this.mode = 'balls'
-    this.message.setText(`Which ball? Odds depend on ${displayName(this.state.wild)}'s level, rarity${this.state.wild.shiny ? ' and shininess' : ''}.`)
+    const w = this.state.wild
+    this.message.setText(`Which ball? ${displayName(w)}'s capture rate is ${w.captureRate}/255, and lower HP helps. Master Balls never miss.`)
     const opts = BALLS.map((b, i) => ({
       ...this.grid(i),
       label: `[${b.hotkey}] ${b.name}  ${this.state.catchChances[b.key]}%  ×${this.state.balls[b.key]}`,
@@ -276,7 +277,7 @@ export class BattleScene extends Phaser.Scene {
     this.catchBadge.setVisible(false)
     if (msg) this.message.setText(msg)
     this.setMenu([
-      { label: 'CATCH [X]', key: 'x', x: 260, y: 540, width: 220, color: '#c62828', pulse: true, action: () => this.ballMenu() },
+      { label: 'CATCH [C]', key: 'c', x: 260, y: 540, width: 220, color: '#c62828', pulse: true, action: () => this.ballMenu() },
       { label: 'ELIMINATE [E]', key: 'e', x: 540, y: 540, width: 220, color: '#6d4c41', action: () => this.eliminate() },
     ])
   }

@@ -7,7 +7,34 @@ async function request(method, path, body) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
+  saveSquad(data.party ? data : data.state)
   return data
+}
+
+export const SQUAD_KEY = 'poke-arena:squad'
+
+// Keeps a copy of the current team in localStorage. The server stays the source of truth;
+// this is just so the squad survives in the browser between visits.
+function saveSquad(state) {
+  if (!state?.party) return
+  const squad = {
+    sessionId: state.sessionId,
+    savedAt: new Date().toISOString(),
+    members: state.party.map(({ id, name, level, shiny, types, sprite, aura }) => ({ id, name, level, shiny, types, sprite, aura })),
+  }
+  try {
+    localStorage.setItem(SQUAD_KEY, JSON.stringify(squad))
+  } catch {
+    // Storage can be blocked (private mode, full quota); the game works without it.
+  }
+}
+
+export function loadSquad() {
+  try {
+    return JSON.parse(localStorage.getItem(SQUAD_KEY))
+  } catch {
+    return null
+  }
 }
 
 const post = (path, sessionId, extra) => request('POST', path, { sessionId, ...extra })
@@ -22,6 +49,7 @@ export const api = {
   equip: (id, uid, slot) => post('equip', id, { uid, slot }),
   unequip: (id, uid) => post('unequip', id, { uid }),
   battle: (id) => post('battle', id),
+  spawn: (id, pokemonId, level) => post('spawn', id, { id: pokemonId, level }),
   attack: (id, ability) => post('attack', id, { ability }),
   switch: (id, slot) => post('switch', id, { slot }),
   run: (id) => post('run', id),

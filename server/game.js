@@ -10,20 +10,20 @@ const POKEAPI_SPECIES = 'https://pokeapi.co/api/v2/pokemon-species'
 export const STARTERS = ['palkia', 'dialga', 'arceus', 'eternatus']
 
 export const BALLS = {
-  regular: { name: 'Poké Ball', chance: 0.5, start: 100, bonus: 100 },
-  legendary: { name: 'Legend Ball', chance: 0.7, start: 50, bonus: 50 },
-  master: { name: 'Master Ball', chance: 0.9, start: 15, bonus: 0 },
+  regular: { name: 'Poké Ball', multiplier: 1, start: 100, bonus: 100 },
+  legendary: { name: 'Legend Ball', multiplier: 2, start: 50, bonus: 50 },
+  master: { name: 'Master Ball', multiplier: Infinity, start: 15, bonus: 0 },
 }
 
-// Spawn table: rarer tiers appear less often, are stronger, and resist capture.
+// Spawn table: rarer tiers appear less often and are stronger. Catch odds come from each species' capture rate.
 export const RARITIES = {
-  common: { weight: 55, levels: [5, 14], catch: 1, bonus: 0, ids: [19, 16, 41, 52, 74, 92, 35, 81, 129, 10] },
-  uncommon: { weight: 28, levels: [15, 24], catch: 0.85, bonus: 50, ids: [25, 58, 66, 95, 133, 93, 63, 215, 4, 7, 1, 280] },
-  rare: { weight: 12, levels: [28, 36], catch: 0.7, bonus: 150, ids: [6, 94, 130, 212, 448, 197, 208, 468, 143, 9, 3] },
-  epic: { weight: 4, levels: [45, 52], catch: 0.5, bonus: 300, ids: [149, 248, 445, 376, 282] },
-  legendary: { weight: 1, levels: [60, 70], catch: 0.3, bonus: 600, ids: [150, 384, 487, 249] },
+  common: { weight: 55, levels: [5, 14], bonus: 0, ids: [19, 16, 41, 52, 74, 92, 35, 81, 129, 10] },
+  uncommon: { weight: 28, levels: [15, 24], bonus: 50, ids: [25, 58, 66, 95, 133, 93, 63, 215, 4, 7, 1, 280] },
+  rare: { weight: 12, levels: [28, 36], bonus: 150, ids: [6, 94, 130, 212, 448, 197, 208, 468, 143, 9, 3] },
+  epic: { weight: 4, levels: [45, 52], bonus: 300, ids: [149, 248, 445, 376, 282] },
+  legendary: { weight: 1, levels: [60, 70], bonus: 600, ids: [150, 384, 487, 249] },
   // Titans never come from the weighted roll; they spawn through TITAN_CHANCE instead.
-  titan: { weight: 0, levels: [50, 65], catch: 0.8, bonus: 1500, ids: [383, 382, 384, 250, 249, 150, 487, 643, 644, 646, 716, 717] },
+  titan: { weight: 0, levels: [50, 65], bonus: 1500, ids: [383, 382, 384, 250, 249, 150, 487, 643, 644, 646, 716, 717] },
 }
 
 // Titans: giant bosses with huge HP. Your whole collection fights them together,
@@ -67,7 +67,6 @@ const STATUS = {
 }
 const MAX_STAGE = 2 // stat boosts and drops from abilities stop at 2x / 0.5x
 const SHINY_CHANCE = 1 / 40
-const SHINY_CATCH = 0.6 // shinies are 40% harder to catch
 const SHINY_STAT_BONUS = 1.1
 
 // Day/night cycle, counted from the start of each trial. Wild Pokémon that
@@ -134,7 +133,7 @@ const WILD_STRONG_CHANCE = 0.3
 const START_LEVEL = 20
 // Starters are boosted to these stats at START_LEVEL, scaling up as they level.
 const STARTER_STATS = { maxHp: 300, attack: 200 }
-const PARTY_SIZE = 4
+const PARTY_SIZE = 3
 const UPGRADE_LEVELS = 5
 
 // Raw stats are turned into capped game numbers, so no Pokémon gets too strong.
@@ -150,9 +149,10 @@ export const UPGRADE_CARDS = {
 }
 const BLACKOUT_PENALTY = 150
 const WIN_HEAL = 0.25
-const CATCH_HP_RATIO = 0.3 // wild HP must be at or below this to throw a ball mid-battle
+const CATCH_HP_RATIO = 0.2 // wild HP must be below this to throw a ball mid-battle
 
 const cache = new Map()
+const DEFAULT_CAPTURE_RATE = 45 // for sessions saved before capture rates were stored
 
 async function fetchSpecies(idOrName) {
   if (cache.has(idOrName)) return cache.get(idOrName)
@@ -160,8 +160,12 @@ async function fetchSpecies(idOrName) {
     if (!res.ok) throw new Error(`PokéAPI ${idOrName}: ${res.status}`)
     const data = await res.json()
     const base = Object.fromEntries(data.stats.map((s) => [s.stat.name, s.base_stat]))
+    const speciesRes = await fetch(data.species.url)
+    if (!speciesRes.ok) throw new Error(`PokéAPI species ${idOrName}: ${speciesRes.status}`)
+    const { capture_rate: captureRate } = await speciesRes.json()
     return {
       id: data.id,
+      captureRate,
       name: data.name,
       types: data.types.map((t) => t.type.name),
       sprite: data.sprites.front_default,
@@ -274,6 +278,7 @@ function makeFighter(species, level, { shiny = false, night = false, rarity = nu
     sprite: (shiny && species.shinySprite) || species.sprite,
     backSprite: (shiny && species.shinyBackSprite) || species.backSprite,
     base,
+    captureRate: species.captureRate,
     level,
     shiny,
     night,
@@ -319,10 +324,15 @@ function damage(attacker, defender, movePower, { critRate = 1 / 16, mult = 1 } =
   return { amount: Math.max(1, Math.min(amount, maxHit)), crit }
 }
 
+// The main-series formula: the species' capture rate (0-255, from PokéAPI) times the ball,
+// scaled up the lower the wild Pokémon's HP is.
 export function catchChance(ballKey, wild) {
-  const levelFactor = Math.max(0.2, 1 - Math.max(0, wild.level - 10) / 80) // Lv 50 → 0.5
-  const chance = BALLS[ballKey].chance * levelFactor * RARITIES[wild.rarity].catch * (wild.shiny ? SHINY_CATCH : 1)
-  return Math.min(0.95, Math.max(0.01, chance))
+  const { multiplier } = BALLS[ballKey]
+  if (multiplier === Infinity) return 1
+  const rate = wild.captureRate ?? DEFAULT_CAPTURE_RATE
+  const hp = Math.max(0, wild.hp)
+  const a = ((3 * wild.maxHp - 2 * hp) * rate * multiplier) / (3 * wild.maxHp)
+  return Math.min(1, Math.max(0.01, a / 255))
 }
 
 function clock(s) {
@@ -358,6 +368,8 @@ export function createGame({
   fetchNextEvolutions = fetchEvolutions,
   fetchChart = fetchTypeChart,
   store = defaultStore(),
+  // Playtest tools (window.arena.spawn) work locally, or on a deploy with PLAYTEST=1.
+  playtest = process.env.PLAYTEST === '1' || process.env.NODE_ENV !== 'production',
 } = {}) {
   async function load(id) {
     const s = id && (await store.get(id))
@@ -422,7 +434,7 @@ export function createGame({
 
   function catchable(s) {
     if (!s.wild) return false
-    return s.phase === 'won' || (s.phase === 'battle' && s.wild.hp <= s.wild.maxHp * CATCH_HP_RATIO)
+    return s.phase === 'won' || (s.phase === 'battle' && s.wild.hp < s.wild.maxHp * CATCH_HP_RATIO)
   }
 
   // Every aura Pokémon you own, in the party or the box, powers up the whole party.
@@ -467,6 +479,7 @@ export function createGame({
       wild: w && {
         id: w.id, name: w.name, types: w.types, sprite: w.sprite, level: w.level, hp: w.hp, maxHp: w.maxHp,
         baseSpeed: w.base.speed, shiny: w.shiny, night: w.night, rarity: w.rarity, titan: Boolean(w.titan),
+        captureRate: w.captureRate ?? DEFAULT_CAPTURE_RATE,
         ability: abilityView(w),
       },
       time: { ...clock(s), dayMs: DAY_MS, nightMs: NIGHT_MS },
@@ -483,6 +496,8 @@ export function createGame({
       catchChances: w ? Object.fromEntries(Object.keys(BALLS).map((k) => [k, Math.round(catchChance(k, w) * 100)])) : null,
       balls: { ...s.balls },
       canUpgrade: canUpgrade(s),
+      partySize: PARTY_SIZE,
+      playtest,
       upgradeCards: cardsView(p),
       canEnterArena: !s.finished && anyHealthy(s),
       caught: s.caught.map(({ name, level, ball, shiny, rarity }) => ({ name, level, ball, shiny, rarity })),
@@ -758,11 +773,21 @@ export function createGame({
       sprite: (p.shiny && species.shinySprite) || species.sprite,
       backSprite: (p.shiny && species.shinyBackSprite) || species.backSprite,
       base: boostedBase(species.base, p),
+      captureRate: species.captureRate,
       moves: movesFor(species),
     })
     p.pp = p.moves.map((m) => m.pp)
     register(s, p, 'evolved')
     return from
+  }
+
+  function startBattle(s) {
+    s.phase = 'battle'
+    for (const m of s.party) {
+      m.pp = m.moves.map((mv) => mv.pp)
+      m.fx = freshFx()
+    }
+    s.wild.fx = freshFx()
   }
 
   function requireSlot(s, slot) {
@@ -871,15 +896,26 @@ export function createGame({
       return view(s)
     }),
 
+    // Playtest only: replace the wild Pokémon with any species and start the battle.
+    spawn: withSession(async (s, { id, level }) => {
+      if (!playtest) throw new GameError('Playtest tools are turned off on this server', 403)
+      if (s.location !== 'arena' || s.phase !== 'explore') throw new GameError('Go to the arena (and finish any battle) first')
+      const speciesId = Number(id)
+      if (!Number.isInteger(speciesId) || speciesId < 1 || speciesId > 1025) throw new GameError('Give a Pokédex number from 1 to 1025')
+      const species = await fetchPokemon(speciesId).catch(() => {
+        throw new GameError(`No Pokémon #${speciesId} on PokéAPI`, 404)
+      })
+      const rarity = Object.keys(RARITIES).find((k) => k !== 'titan' && RARITIES[k].ids.includes(speciesId)) ?? 'common'
+      const lvl = Math.min(LIMITS.level, Math.max(1, Number(level) || between(...RARITIES[rarity].levels)))
+      s.wild = makeFighter(species, lvl, { rarity })
+      startBattle(s)
+      return view(s)
+    }),
+
     battle: withSession(async (s) => {
       if (s.location !== 'arena' || s.phase !== 'explore' || !s.wild) throw new GameError('No wild Pokémon to battle')
       if (active(s).fainted) throw new GameError('Switch to a healthy Pokémon first')
-      s.phase = 'battle'
-      for (const m of s.party) {
-        m.pp = m.moves.map((mv) => mv.pp)
-        m.fx = freshFx()
-      }
-      s.wild.fx = freshFx()
+      startBattle(s)
       return view(s)
     }),
 

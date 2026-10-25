@@ -1,11 +1,12 @@
 import Phaser from 'phaser'
 import { api } from '../api.js'
 import { Hud } from '../hud.js'
-import { Bar, RARITY_COLORS, bake, button, capitalize, displayName, loadSprites, text, textureKey } from '../ui.js'
+import { Bar, RARITY_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
 
 const HUD_HEIGHT = 70
 const PANEL_HEIGHT = 110
 const SPRITE_SCALE = 1.5
+const TITAN_SCALE = 3.4
 const NEAR_DISTANCE = 90
 const WANDER_PAUSE_MS = [300, 1200]
 
@@ -52,11 +53,17 @@ export class ArenaScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(width * 0.2, (this.fieldTop + this.fieldBottom) / 2, textureKey(this.state.player))
     this.player.setScale(SPRITE_SCALE).setCollideWorldBounds(true).setDepth(5)
     this.player.body.setSize(48, 48)
+    setAura(this.player, this.state.player.aura)
 
     this.wildLabel = text(this, 0, 0, '', { fontSize: '13px', backgroundColor: '#000000aa', padding: { x: 4, y: 2 } })
       .setOrigin(0.5, 1)
       .setDepth(6)
     this.wildBar = new Bar(this, 0, 0, 70, 6).setDepth(6)
+    this.bossLabel = text(this, 0, 0, 'BOSS', { fontSize: '26px', fontStyle: 'bold', color: '#ff1744', stroke: '#000000', strokeThickness: 5 })
+      .setOrigin(0.5, 1)
+      .setDepth(6)
+      .setVisible(false)
+    this.tweens.add({ targets: this.bossLabel, scale: 1.15, yoyo: true, repeat: -1, duration: 500 })
     this.time.addEvent({ delay: 350, loop: true, callback: () => this.shinySparkle() })
 
     this.spawnWild()
@@ -87,13 +94,13 @@ export class ArenaScene extends Phaser.Scene {
     const x = this.player.x < width / 2 ? width - 70 : 70
     const y = Phaser.Math.Between(this.fieldTop + 60, this.fieldBottom - 60)
     if (this.wild) this.wild.destroy()
-    this.wild = this.physics.add.sprite(x, y, textureKey(w)).setScale(SPRITE_SCALE).setCollideWorldBounds(true).setDepth(5)
+    this.wild = this.physics.add.sprite(x, y, textureKey(w)).setScale(w.titan ? TITAN_SCALE : SPRITE_SCALE).setCollideWorldBounds(true).setDepth(5)
     this.wild.body.setSize(48, 48)
     this.wild.setAlpha(0)
     this.tweens.add({ targets: this.wild, alpha: 1, duration: 400 })
     this.wanderTarget = null
     this.wanderAt = this.time.now + WANDER_PAUSE_MS[1]
-    this.wildLabel.setText(`${w.night ? '☾ ' : ''}${displayName(w)}  Lv ${w.level}`).setColor(RARITY_COLORS[w.rarity])
+    this.wildLabel.setText(`${w.night ? '☾ ' : ''}${w.titan ? 'TITAN ' : ''}${displayName(w)}  Lv ${w.level}`).setColor(RARITY_COLORS[w.rarity])
   }
 
   setNight(night, changed) {
@@ -121,7 +128,8 @@ export class ArenaScene extends Phaser.Scene {
     const w = this.state.wild
     const tag = `${w.shiny ? 'SHINY ' : ''}${w.rarity === 'common' ? '' : `${w.rarity.toUpperCase()} `}`
     const empowered = w.night ? ' It is empowered by the night!' : ''
-    this.message.setText(msg ?? `A wild ${tag}${displayName(w).replace('★ ', '')} (Lv ${w.level}) is roaming!${empowered} Press E to fight.`)
+    const titanMsg = `⚠ A giant TITAN ${displayName(w)} (Lv ${w.level}) appeared! All the Pokémon you've caught will fight it together. Press E to fight!`
+    this.message.setText(msg ?? (w.titan ? titanMsg : null) ?? `A wild ${tag}${displayName(w).replace('★ ', '')} (Lv ${w.level}) is roaming!${empowered} Press E to fight.`)
 
     const opts = [
       { label: 'FIGHT! [E]', color: '#c62828', action: () => this.fight() },
@@ -177,9 +185,11 @@ export class ArenaScene extends Phaser.Scene {
 
     const visible = this.wild.alpha > 0.3 && this.wild.scale > 0.5
     this.wildLabel.setVisible(visible)
+    this.bossLabel.setVisible(visible && Boolean(this.state.wild?.titan))
     this.wildBar.g.setVisible(visible)
     const top = this.wild.y - (this.wild.displayHeight / 2) * 0.6
     this.wildLabel.setPosition(this.wild.x, top - 4)
+    this.bossLabel.setPosition(this.wild.x, top - 26)
     this.wildBar.setPosition(this.wild.x - 35, top + 3)
     this.wildBar.set(this.state.wild?.hp ?? 0, this.state.wild?.maxHp ?? 1)
   }
@@ -227,6 +237,7 @@ export class ArenaScene extends Phaser.Scene {
     }
     await loadSprites(this, [...state.party, state.wild])
     this.player.setTexture(textureKey(state.player))
+    setAura(this.player, state.player.aura)
     this.hud.update(state)
     // Caught, eliminated or fled: a new wild Pokémon wanders in.
     this.wild.setAlpha(0)
@@ -243,6 +254,7 @@ export class ArenaScene extends Phaser.Scene {
       await loadSprites(this, [this.state.player])
       await this.tweenTo(this.player, { scale: 0 }, 150)
       this.player.setTexture(textureKey(this.state.player))
+      setAura(this.player, this.state.player.aura)
       await this.tweenTo(this.player, { scale: SPRITE_SCALE }, 150)
       this.explore(`Go, ${displayName(this.state.player)}!`)
     })

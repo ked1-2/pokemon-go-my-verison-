@@ -1,11 +1,12 @@
 import Phaser from 'phaser'
 import { api } from '../api.js'
-import { BALLS, Bar, RARITY_COLORS, TYPE_COLORS, backTextureKey, bake, button, displayName, loadSprites, text, textureKey } from '../ui.js'
+import { BALLS, Bar, RARITY_COLORS, TYPE_COLORS, backTextureKey, bake, button, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
 
 const PANEL_TOP = 450
 const WILD_SPOT = { x: 580, y: 250 }
 const PLAYER_SPOT = { x: 220, y: 445 }
 const WILD_SCALE = 2
+const TITAN_SCALE = 3.4
 const PLAYER_SCALE = 3
 const RIGHT_COL_X = 680
 
@@ -18,6 +19,7 @@ export class BattleScene extends Phaser.Scene {
 
   init({ state, onEnd }) {
     this.state = state
+    this.wildScale = state.wild.titan ? TITAN_SCALE : WILD_SCALE
     this.onEnd = onEnd
     this.mode = 'busy' // busy | choose | balls | party | won
     this.menuKeys = {}
@@ -48,15 +50,22 @@ export class BattleScene extends Phaser.Scene {
   }
 
   createFighters() {
-    this.wildSprite = this.add.image(WILD_SPOT.x, WILD_SPOT.y + 8, textureKey(this.state.wild)).setOrigin(0.5, 0.8).setScale(WILD_SCALE)
+    this.wildSprite = this.add.image(WILD_SPOT.x, WILD_SPOT.y + 8, textureKey(this.state.wild)).setOrigin(0.5, 0.8).setScale(this.wildScale)
     this.playerSprite = this.add.image(PLAYER_SPOT.x, PLAYER_SPOT.y, '__DEFAULT').setOrigin(0.5, 0.8).setScale(PLAYER_SCALE)
     this.setPlayerTexture()
+    if (this.state.wild.titan) {
+      this.bossLabel = text(this, WILD_SPOT.x, 22, 'BOSS', { fontSize: '30px', fontStyle: 'bold', color: '#ff1744', stroke: '#000000', strokeThickness: 6 })
+        .setOrigin(0.5, 0)
+        .setDepth(26)
+      this.tweens.add({ targets: this.bossLabel, scale: 1.15, yoyo: true, repeat: -1, duration: 500 })
+    }
   }
 
   setPlayerTexture() {
     const p = this.state.player
     const back = this.textures.exists(backTextureKey(p)) ? backTextureKey(p) : textureKey(p)
     this.playerSprite.setTexture(back).setFlipX(back === textureKey(p))
+    setAura(this.playerSprite, p.aura)
   }
 
   createInfoBoxes() {
@@ -69,7 +78,7 @@ export class BattleScene extends Phaser.Scene {
       box(24, 24, 300, 92),
       text(this, 40, 32, displayName(w), { fontSize: '20px', fontStyle: 'bold', color: w.shiny ? '#f9a825' : '#263238' }),
       text(this, 308, 34, `Lv ${w.level}`, { fontSize: '16px', color: '#263238' }).setOrigin(1, 0),
-      text(this, 40, 60, `${w.types.map((t) => t.toUpperCase()).join(' / ')}${rarityTag}`, {
+      text(this, 40, 60, `${w.types.map((t) => t.toUpperCase()).join(' / ')}${rarityTag}  ·  ${w.ability.name}`, {
         fontSize: '11px',
         fontStyle: 'bold',
         color: '#546e7a',
@@ -95,9 +104,11 @@ export class BattleScene extends Phaser.Scene {
     this.playerBox.add([this.playerName, this.playerLevel, text(this, 476, 362, 'HP', { fontSize: '13px', fontStyle: 'bold', color: '#ef6c00' })])
     this.playerHp = new Bar(this, 504, 364, 256, 10)
     this.playerHpText = text(this, 760, 382, '', { fontSize: '16px', color: '#263238' }).setOrigin(1, 0)
+    this.playerAbility = text(this, 476, 386, '', { fontSize: '12px', fontStyle: 'bold', color: '#546e7a' })
+    this.playerBox.add(this.playerAbility)
     this.refreshPlayerBox()
 
-    this.hudParts = [this.wildBox, this.wildHp.g, this.playerBox, this.playerHp.g, this.playerHpText]
+    this.hudParts = [this.wildBox, this.wildHp.g, this.playerBox, this.playerHp.g, this.playerHpText, ...(this.bossLabel ? [this.bossLabel] : [])]
     this.hudParts.forEach((o) => o.setAlpha(0))
   }
 
@@ -108,6 +119,7 @@ export class BattleScene extends Phaser.Scene {
     this.playerHp.drawnFill = null
     this.playerHp.set(p.hp, p.maxHp)
     this.playerHpText.setText(`${p.hp} / ${p.maxHp}`)
+    this.playerAbility.setText(`${p.ability.name}${p.aura ? '  ✦ AURA' : ''}`)
   }
 
   createPanel() {
@@ -136,7 +148,7 @@ export class BattleScene extends Phaser.Scene {
     const right = this.add.container(520, 0, [
       this.add.polygon(0, 0, [470, 0, width, 0, width, height, 330, height], 0xe53935).setOrigin(0),
       this.add.image(625, 270, textureKey(w)).setScale(2.6),
-      text(this, 625, 420, `WILD ${displayName(w).toUpperCase()}`, { fontSize: '28px', fontStyle: 'bold', stroke: '#b71c1c', strokeThickness: 6 }).setOrigin(0.5),
+      text(this, 625, 420, `${w.titan ? 'TITAN' : 'WILD'} ${displayName(w).toUpperCase()}`, { fontSize: '28px', fontStyle: 'bold', stroke: '#b71c1c', strokeThickness: 6 }).setOrigin(0.5),
       text(this, 625, 458, `Lv ${w.level}${w.rarity === 'common' ? '' : `  ·  ${w.rarity.toUpperCase()}`}`, { fontSize: '18px', color: RARITY_COLORS[w.rarity] }).setOrigin(0.5),
     ])
     const vs = text(this, width / 2, height / 2 - 20, 'VS', {
@@ -171,7 +183,10 @@ export class BattleScene extends Phaser.Scene {
     ])
     this.hudParts.forEach((o) => this.tweens.add({ targets: o, alpha: 1, duration: 250 }))
     const shinyNote = w.shiny ? ' It\'s SHINY!' : ''
-    this.message.setText(`A wild ${displayName(w).replace('★ ', '')} appeared!${shinyNote} Go, ${displayName(p)}!`)
+    const intro = w.titan
+      ? `The TITAN ${displayName(w)} towers over you! Every Pokémon you've caught joins this fight!`
+      : `A wild ${displayName(w).replace('★ ', '')} appeared!${shinyNote}`
+    this.message.setText(`${intro} Go, ${displayName(p)}!`)
     await this.wait(w.shiny ? 1400 : 900)
     this.choose()
   }
@@ -202,7 +217,8 @@ export class BattleScene extends Phaser.Scene {
     this.mode = 'choose'
     const low = this.state.catchable
     this.catchBadge.setVisible(low)
-    this.message.setText(low ? `${displayName(this.state.wild)} is weak! Press X to catch it, or keep attacking.` : `What will ${displayName(this.state.player)} do?`)
+    const p = this.state.player
+    this.message.setText(low ? `${displayName(this.state.wild)} is weak! Press X to catch it, or keep attacking.` : `What will ${displayName(p)} do?  (Ability: ${p.ability.name})`)
 
     const opts = this.state.abilities.map((a, i) => {
       const hex = `#${(TYPE_COLORS[a.type] ?? 0x1565c0).toString(16).padStart(6, '0')}`
@@ -291,7 +307,7 @@ export class BattleScene extends Phaser.Scene {
   async afterTurn(result) {
     if (result === 'win') {
       const w = this.state.wild
-      this.wonMenu(`Wild ${displayName(w)} was defeated! +${w.level * 10} XP. Catch it or eliminate it?`)
+      this.wonMenu(`${w.titan ? 'The TITAN' : 'Wild'} ${displayName(w)} was defeated! +${w.level * 10 * (w.titan ? 3 : 1)} XP. Catch it or eliminate it?`)
     } else if (result === 'fainted') {
       this.partyMenu(true)
     } else if (result === 'blackout') {
@@ -359,7 +375,7 @@ export class BattleScene extends Phaser.Scene {
         res = await pending
       } catch (err) {
         orb.destroy()
-        this.wildSprite.clearTint().setScale(WILD_SCALE).setAlpha(wasWon ? 0.5 : 1)
+        this.wildSprite.clearTint().setScale(this.wildScale).setAlpha(wasWon ? 0.5 : 1)
         throw err
       }
 
@@ -375,6 +391,11 @@ export class BattleScene extends Phaser.Scene {
         this.burst(orb.x, orb.y, 0xffd54f, 14, 70)
         const where = res.destination === 'party' ? 'It joined your party!' : 'Your party is full, so it was sent to the box.'
         this.message.setText(`Gotcha! ${wildName} was caught! ${where}`)
+        if (this.state.wild.titan) {
+          await this.wait(1400)
+          this.burst(orb.x, orb.y, 0xffd54f, 24, 140)
+          this.message.setText('The Titan shrank to normal size... but it glows with a golden aura! All your Pokémon are stronger now!')
+        }
         this.state = res.state
         await this.wait(1600)
         return this.finish('resolved', `${wildName} was caught with a ${ball.name}! ${where}`)
@@ -384,7 +405,7 @@ export class BattleScene extends Phaser.Scene {
       this.burst(orb.x, orb.y, 0xffffff, 10, 50)
       orb.destroy()
       this.wildSprite.clearTint()
-      await this.tweenTo(this.wildSprite, { scale: WILD_SCALE, alpha: wasWon ? 0.5 : 1 }, 220)
+      await this.tweenTo(this.wildSprite, { scale: this.wildScale, alpha: wasWon ? 0.5 : 1 }, 220)
       this.message.setText(`Oh no! ${wildName} broke free!`)
       await this.wait(900)
       for (const ev of res.events) await this.playEvent(ev)
@@ -420,10 +441,12 @@ export class BattleScene extends Phaser.Scene {
   // ---------- event playback ----------
 
   async playEvent(ev) {
+    if (ev.kind === 'status') return this.playStatus(ev)
+    if (ev.kind === 'team') return this.playTeam(ev)
     const isPlayer = ev.actor === 'player'
     const attacker = isPlayer ? this.playerSprite : this.wildSprite
     const defender = isPlayer ? this.wildSprite : this.playerSprite
-    const name = isPlayer ? displayName(this.state.player) : `Wild ${displayName(this.state.wild)}`
+    const name = isPlayer ? displayName(this.state.player) : `${this.state.wild.titan ? 'Titan' : 'Wild'} ${displayName(this.state.wild)}`
     this.message.setText(`${name} used ${ev.ability}!`)
     await this.wait(350)
 
@@ -447,8 +470,8 @@ export class BattleScene extends Phaser.Scene {
     }
     if (ev.miss) {
       await this.tweenTo(defender, { x: defender.x + 40, yoyo: true }, 140)
-      this.message.setText('But it missed!')
-      return this.wait(700)
+      this.message.setText(ev.notes?.[0] ?? 'But it missed!')
+      return this.wait(900)
     }
 
     const hit = this.center(defender)
@@ -459,6 +482,10 @@ export class BattleScene extends Phaser.Scene {
     if (ev.crit) {
       this.message.setText('A critical hit!')
       await this.wait(550)
+    }
+    for (const note of ev.notes ?? []) {
+      this.message.setText(note)
+      await this.wait(850)
     }
 
     if (ev.wildHp === 0 && isPlayer) {
@@ -471,6 +498,47 @@ export class BattleScene extends Phaser.Scene {
       await this.wait(700)
     } else {
       await this.wait(250)
+    }
+  }
+
+  async playStatus(ev) {
+    const sprite = ev.actor === 'player' ? this.playerSprite : this.wildSprite
+    this.message.setText(ev.text)
+    this.sparkle(sprite, 0xce93d8)
+    this.tweens.add({ targets: sprite, angle: 6, yoyo: true, repeat: 3, duration: 70, onComplete: () => sprite.setAngle(0) })
+    await this.updateHp(ev)
+    await this.wait(900)
+    await this.checkFaint(ev)
+  }
+
+  // Every other Pokémon you own piles onto the Titan.
+  async playTeam(ev) {
+    this.message.setText(`Your whole team joins in! ${ev.names.length} Pokémon attack the Titan!`)
+    const to = this.center(this.wildSprite)
+    const shots = ev.names.slice(0, 10).map((_, i) => {
+      const orb = this.add.circle(40 + i * 36, PANEL_TOP - 20, 10, 0xffd54f).setStrokeStyle(3, 0xffffff).setDepth(22)
+      const target = { x: to.x + Phaser.Math.Between(-40, 40), y: to.y + Phaser.Math.Between(-40, 40), delay: i * 60 }
+      return this.tweenTo(orb, target, 380).then(() => orb.destroy())
+    })
+    await Promise.all(shots)
+    this.burst(to.x, to.y, 0xffd54f, 20, 130)
+    this.cameras.main.shake(300, 0.012)
+    this.blink(this.wildSprite)
+    await this.updateHp(ev)
+    this.message.setText(`Your team dealt ${ev.damage} damage to the Titan!`)
+    await this.wait(900)
+    await this.checkFaint(ev)
+  }
+
+  async checkFaint(ev) {
+    if (ev.wildHp === 0) {
+      await this.faint(this.wildSprite, 0.5)
+      this.message.setText(`${this.state.wild.titan ? 'The Titan' : 'Wild'} ${displayName(this.state.wild)} fainted!`)
+      await this.wait(700)
+    } else if (ev.playerHp === 0) {
+      await this.faint(this.playerSprite, 0)
+      this.message.setText(`${displayName(this.state.player)} fainted!`)
+      await this.wait(700)
     }
   }
 

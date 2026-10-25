@@ -1,4 +1,4 @@
-import { BALLS, Bar, displayName, loadSprites, text, textureKey } from './ui.js'
+import { BALLS, Bar, displayName, loadSprites, setAura, text, textureKey } from './ui.js'
 
 const SLOT_W = 66
 
@@ -28,6 +28,7 @@ export class Hud {
 
     this.score = text(scene, 786, 8, '', { fontSize: '14px', fontStyle: 'bold', color: '#ffd54f' }).setOrigin(1, 0)
     this.clock = text(scene, 786, 24, '', { fontSize: '11px' }).setOrigin(1, 0)
+    this.aura = text(scene, 598, 10, '', { fontSize: '11px', fontStyle: 'bold', color: '#ffd54f' })
     scene.time.addEvent({ delay: 1000, loop: true, callback: () => this.tick() })
     this.balls = BALLS.map((b, i) => {
       const x = 604 + i * 62
@@ -44,6 +45,7 @@ export class Hud {
     this.xp.set(p.xp, p.xpNext)
     this.xpText.setText(`XP ${p.xp}/${p.xpNext}`)
     this.score.setText(`Score ${state.score}`)
+    this.aura.setText(state.auraBoost > 1 ? `✦ Aura ×${state.auraBoost}` : '')
     BALLS.forEach((b, i) => this.balls[i].setText(`×${state.balls[b.key]}`))
     this.time = state.time
     this.timeAt = Date.now()
@@ -59,6 +61,7 @@ export class Hud {
         slot.bar.g.setVisible(Boolean(m))
         if (!m) return
         slot.sprite.setTexture(textureKey(m)).setAlpha(m.fainted ? 0.35 : 1)
+        setAura(slot.sprite, m.aura)
         if (m.fainted) slot.sprite.setTint(0x666666)
         else slot.sprite.clearTint()
         slot.bar.set(m.hp, m.maxHp)

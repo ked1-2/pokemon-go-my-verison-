@@ -1,11 +1,13 @@
 import Phaser from 'phaser'
 import { api } from '../api.js'
 import { Hud } from '../hud.js'
-import { BALLS, RARITY_COLORS, bake, button, capitalize, displayName, loadSprites, text, textureKey } from '../ui.js'
+import { BALLS, RARITY_COLORS, TYPE_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
 
 const PANEL_TOP = 490
 const FIELD_TOP = 70
 const INTERACT_RANGE = 70
+const DEX_COLS = 4
+const DEX_ROWS = 4
 
 const NPC_SPECIES = [
   { id: 113, name: 'chansey', sprite: 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/113.png' },
@@ -13,11 +15,13 @@ const NPC_SPECIES = [
   { id: 25, name: 'pikachu', sprite: 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png' },
   { id: 133, name: 'eevee', sprite: 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/133.png' },
   { id: 39, name: 'jigglypuff', sprite: 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/39.png' },
+  { id: 137, name: 'porygon', sprite: 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/137.png' },
 ]
 
 const TIPS = {
   pikachu: [
     'Pika! Every Pokémon you eliminate makes the next wild ones 2 levels higher.',
+    'Pika! Every Pokémon has an ability from its type. Fire burns, grass leeches, electric paralyzes!',
     'Pika! Ghost types shrug off Normal and Fighting moves. Try another ability!',
     'Pika pika! Flying types float right over Ground moves.',
     'Fairy types are immune to Dragon moves. Switch with 1-4 if you get stuck!',
@@ -30,6 +34,8 @@ const TIPS = {
     'Vee~ At night wild Pokémon get stronger, but shinies show up much more often!',
   ],
   jigglypuff: [
+    'Jiggly~ Watch out for TITANS! They are huge bosses, but every Pokémon you own fights them with you.',
+    'Jiggly~ Catch a Titan and it glows with an aura that makes your whole team stronger!',
     'Jiggly~ Get a wild Pokémon below 30% HP, then press X to throw a ball.',
     'Your party holds 4 Pokémon. Extra catches go to the box in the Stats Hall.',
     'If your whole team faints you black out. Chansey will patch everyone up here for free!',
@@ -74,6 +80,7 @@ export class LobbyScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(400, 320, textureKey(this.state.player)).setDepth(10)
     this.player.setCollideWorldBounds(true)
     this.player.body.setSize(40, 40)
+    setAura(this.player, this.state.player.aura)
     this.physics.world.setBounds(0, FIELD_TOP + 140, width, PANEL_TOP - FIELD_TOP - 140)
     this.createNpcs()
     this.walk(this.startMessage)
@@ -100,6 +107,10 @@ export class LobbyScene extends Phaser.Scene {
       g.fillStyle(0xe3f2fd).fillRect(550, 120, 200, 110)
       g.fillStyle(0x1e88e5).fillTriangle(530, 125, 650, 78, 770, 125)
       g.fillStyle(0xffd54f).fillRect(620, 180, 60, 50)
+      // Pokédex lab (top centre)
+      g.fillStyle(0xede7f6).fillRect(340, 140, 120, 80)
+      g.fillStyle(0x7e57c2).fillTriangle(325, 144, 400, 104, 475, 144)
+      g.fillStyle(0x9575cd).fillRect(385, 180, 30, 40)
       // Arena gate (bottom centre)
       g.fillStyle(0x6d4c41).fillRect(340, PANEL_TOP - 62, 14, 62).fillRect(446, PANEL_TOP - 62, 14, 62)
       g.fillStyle(0xc62828).fillRect(330, PANEL_TOP - 74, 140, 18)
@@ -109,6 +120,7 @@ export class LobbyScene extends Phaser.Scene {
     })
     text(this, 150, 135, 'HEALING\nCENTER', { fontSize: '15px', fontStyle: 'bold', color: '#c62828', align: 'center' }).setOrigin(0.5, 0)
     text(this, 650, 135, 'STATS\nHALL', { fontSize: '15px', fontStyle: 'bold', color: '#1565c0', align: 'center' }).setOrigin(0.5, 0)
+    text(this, 400, 150, 'POKÉDEX', { fontSize: '13px', fontStyle: 'bold', color: '#4527a0' }).setOrigin(0.5, 0)
     text(this, 400, PANEL_TOP - 65, 'ARENA ▼', { fontSize: '13px', fontStyle: 'bold' }).setOrigin(0.5)
     text(this, 90, PANEL_TOP - 63, 'END\nTRIAL', { fontSize: '11px', fontStyle: 'bold', color: '#5d4037', align: 'center' }).setOrigin(0.5)
   }
@@ -118,6 +130,7 @@ export class LobbyScene extends Phaser.Scene {
     this.interactables = [
       { sprite: npc(113, 150, 262), label: 'Heal with Chansey', action: () => this.heal() },
       { sprite: npc(122, 650, 262), label: 'Stats with Mr. Mime', action: () => this.showStats() },
+      { sprite: npc(137, 400, 246), label: 'Open the Pokédex [P]', action: () => this.showDex() },
       { x: 400, y: PANEL_TOP - 30, label: 'Enter the arena', action: () => this.enterArena() },
       { x: 90, y: PANEL_TOP - 40, label: 'End the trial', action: () => this.confirmEnd() },
     ]
@@ -169,6 +182,7 @@ export class LobbyScene extends Phaser.Scene {
       if (key === 'e' && this.target) this.target.action()
       else if (['1', '2', '3', '4'].includes(key)) this.swap(Number(key) - 1)
       else if (key === 'u') this.upgrade()
+      else if (key === 'p') this.showDex()
     } else if (this.mode === 'dialog' && (key === 'e' || key === ' ' || key === 'escape')) {
       this.walk()
     } else if (this.mode === 'confirm') {
@@ -176,6 +190,12 @@ export class LobbyScene extends Phaser.Scene {
     } else if (this.mode === 'stats' && (key === 'e' || key === 'escape')) {
       this.statsLayer.destroy()
       this.walk()
+    } else if (this.mode === 'dex') {
+      if (key === 'e' || key === 'escape' || key === 'p') {
+        this.dexLayer.destroy()
+        this.walk()
+      } else if (key === 'arrowright' || key === 'd') this.showDex(this.dexPage + 1)
+      else if (key === 'arrowleft' || key === 'a') this.showDex(this.dexPage - 1)
     }
   }
 
@@ -254,6 +274,7 @@ export class LobbyScene extends Phaser.Scene {
       this.setState(await api.swap(this.state.sessionId, slot))
       await loadSprites(this, [this.state.player])
       this.player.setTexture(textureKey(this.state.player))
+      setAura(this.player, this.state.player.aura)
       this.walk(`Go, ${displayName(this.state.player)}!`)
     })
   }
@@ -266,6 +287,7 @@ export class LobbyScene extends Phaser.Scene {
       const p = state.player
       await loadSprites(this, [p])
       this.player.setTexture(textureKey(p))
+      setAura(this.player, p.aura)
       this.walk(
         evolvedFrom
           ? `What? ${capitalize(evolvedFrom)} evolved into ${displayName(p)}! Now Lv ${p.level}.`
@@ -310,7 +332,7 @@ export class LobbyScene extends Phaser.Scene {
     layer.add(text(this, 400, 24, 'STATS HALL', { fontSize: '30px', fontStyle: 'bold', color: '#ffd54f' }).setOrigin(0.5, 0))
 
     const shinies = s.caught.filter((c) => c.shiny).length
-    const order = ['common', 'uncommon', 'rare', 'epic', 'legendary']
+    const order = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'titan']
     const rarest = [...s.caught].sort((a, b) => order.indexOf(b.rarity) - order.indexOf(a.rarity) || b.level - a.level)[0]
     const rows = [
       ['Score', s.score],
@@ -319,13 +341,16 @@ export class LobbyScene extends Phaser.Scene {
       ['Shinies caught', shinies],
       ['Eliminated', s.eliminated.length],
       ['Blackouts', s.blackouts],
+      ['Pokédex', `${s.dex.length} species`],
+      ['Titans beaten', s.eliminated.filter((e) => e.titan).length],
+      ['Aura boost', s.auraBoost > 1 ? `×${s.auraBoost}` : 'none (catch a Titan!)'],
       ['Wild level bonus', `+${s.levelBonus}`],
       ['Rarest catch', rarest ? `${rarest.shiny ? '★ ' : ''}${capitalize(rarest.name)} Lv ${rarest.level} (${rarest.rarity})` : 'none yet'],
       ['Balls', BALLS.map((b) => `${b.name} ×${s.balls[b.key]}`).join('\n')],
     ]
     rows.forEach(([k, v], i) => {
-      layer.add(text(this, 40, 90 + i * 34, k, { fontSize: '15px', color: '#9fa8da' }))
-      layer.add(text(this, 190, 90 + i * 34, String(v), { fontSize: '15px', fontStyle: 'bold', lineSpacing: 2 }))
+      layer.add(text(this, 40, 76 + i * 30, k, { fontSize: '14px', color: '#9fa8da' }))
+      layer.add(text(this, 190, 76 + i * 30, String(v), { fontSize: '14px', fontStyle: 'bold', lineSpacing: 2 }))
     })
 
     layer.add(text(this, 470, 80, 'PARTY', { fontSize: '14px', color: '#9fa8da' }))
@@ -341,5 +366,55 @@ export class LobbyScene extends Phaser.Scene {
     const box = s.box.map((m) => `${displayName(m)} Lv ${m.level}`).join(', ') || 'empty'
     layer.add(text(this, 470, 420, `BOX (${s.box.length}): ${box}`, { fontSize: '13px', color: '#c5cae9', wordWrap: { width: 310 } }))
     layer.add(button(this, 400, 560, 'Close [E]', () => this.onKey('escape'), { width: 160 }))
+  }
+
+  // ---------- pokédex ----------
+
+  async showDex(page = 0) {
+    const entries = this.state.dex
+    const perPage = DEX_COLS * DEX_ROWS
+    const pages = Math.max(1, Math.ceil(entries.length / perPage))
+    page = Phaser.Math.Clamp(page, 0, pages - 1)
+    if (this.mode === 'dex' && page === this.dexPage) return
+    if (this.mode !== 'walk' && this.mode !== 'dex') return
+    this.mode = 'dex'
+    this.dexPage = page
+    this.prompt.setVisible(false)
+    this.player.setVelocity(0, 0)
+    const shown = entries.slice(page * perPage, (page + 1) * perPage)
+    await loadSprites(this, shown)
+    this.dexLayer?.destroy()
+    const layer = this.add.container(0, 0).setDepth(50)
+    this.dexLayer = layer
+    layer.add(this.add.rectangle(400, 300, 800, 600, 0x1a1033, 0.97))
+    layer.add(text(this, 400, 16, 'POKÉDEX', { fontSize: '28px', fontStyle: 'bold', color: '#b39ddb' }).setOrigin(0.5, 0))
+    const caught = entries.filter((e) => e.count > 0).length
+    layer.add(text(this, 400, 52, `${entries.length} species registered  ·  ${caught} caught  ·  page ${page + 1}/${pages}`, { fontSize: '13px', color: '#d1c4e9' }).setOrigin(0.5, 0))
+
+    if (!entries.length) layer.add(text(this, 400, 280, 'No Pokémon yet. Go catch some in the arena!', { fontSize: '16px' }).setOrigin(0.5))
+    shown.forEach((e, i) => {
+      const x = 22 + (i % DEX_COLS) * 191
+      const y = 80 + Math.floor(i / DEX_COLS) * 112
+      const typeColor = TYPE_COLORS[e.types[0]] ?? 0x9575cd
+      layer.add(this.add.rectangle(x, y, 183, 104, 0x2a1f4d).setOrigin(0).setStrokeStyle(2, typeColor))
+      layer.add(this.add.image(x + 34, y + 44, textureKey(e)).setScale(0.75))
+      layer.add(text(this, x + 70, y + 6, `#${String(e.id).padStart(3, '0')}`, { fontSize: '10px', color: '#9e9e9e' }))
+      layer.add(text(this, x + 70, y + 19, `${e.shinyCaught ? '★ ' : ''}${capitalize(e.name)}`, { fontSize: '12px', fontStyle: 'bold', color: e.shinyCaught ? '#ffd54f' : '#ffffff', fixedWidth: 110 }))
+      e.types.forEach((t, j) => {
+        const hex = `#${(TYPE_COLORS[t] ?? 0x9e9e9e).toString(16).padStart(6, '0')}`
+        layer.add(text(this, x + 70 + j * 52, y + 38, t.toUpperCase(), { fontSize: '9px', fontStyle: 'bold', color: '#1a1033', backgroundColor: hex, padding: { x: 3, y: 1 } }))
+      })
+      layer.add(text(this, x + 70, y + 56, e.ability.name, { fontSize: '11px', fontStyle: 'bold', color: '#80cbc4' }))
+      const how = e.count > 0 ? `Caught ×${e.count}` : e.how === 'starter' ? 'Starter' : 'Evolved'
+      layer.add(text(this, x + 70, y + 72, how, { fontSize: '11px', color: '#c5cae9' }))
+      layer.add(text(this, x + 8, y + 86, e.ability.desc, { fontSize: '9px', color: '#9fa8da', fixedWidth: 170 }))
+    })
+
+    const nav = [
+      { label: '◀ Prev [←]', x: 230, disabled: page === 0, action: () => this.showDex(page - 1) },
+      { label: 'Close [E]', x: 400, action: () => this.onKey('escape') },
+      { label: 'Next [→] ▶', x: 570, disabled: page >= pages - 1, action: () => this.showDex(page + 1) },
+    ]
+    for (const n of nav) layer.add(button(this, n.x, 560, n.label, n.action, { width: 150, disabled: n.disabled, color: '#5e35b1' }))
   }
 }

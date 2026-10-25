@@ -25,10 +25,25 @@ export const TYPE_COLORS = {
 }
 
 export const RARITY_COLORS = {
-  common: '#ffffff', uncommon: '#81c784', rare: '#64b5f6', epic: '#ce93d8', legendary: '#ffb300',
+  common: '#ffffff', uncommon: '#81c784', rare: '#64b5f6', epic: '#ce93d8', legendary: '#ffb300', titan: '#ff1744',
 }
 
+export const AURA_COLOR = 0xffd54f
+
 export const displayName = (p) => `${p.shiny ? '★ ' : ''}${capitalize(p.name)}`
+
+// Turns the pulsing golden aura glow of a caught Titan on or off (WebGL only).
+export function setAura(sprite, on) {
+  if (!sprite.preFX) return
+  if (on && !sprite.auraFx) {
+    sprite.auraFx = sprite.preFX.addGlow(AURA_COLOR, 4, 0, false, 0.1, 12)
+    sprite.auraTween = sprite.scene.tweens.add({ targets: sprite.auraFx, outerStrength: 9, yoyo: true, repeat: -1, duration: 700 })
+  } else if (!on && sprite.auraFx) {
+    sprite.auraTween.remove()
+    sprite.preFX.remove(sprite.auraFx)
+    sprite.auraFx = null
+  }
+}
 
 // Loads PokéAPI sprites (front, plus back when known) at runtime,
 // skipping any already in the texture cache.

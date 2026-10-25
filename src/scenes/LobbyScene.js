@@ -23,6 +23,7 @@ const TIPS = {
     'Fairy types are immune to Dragon moves. Switch with 1-4 if you get stuck!',
   ],
   eevee: [
+    'Vee! Press U when the upgrade button shows up. Pokémon that can evolve will evolve, like Magikarp into Gyarados!',
     'Vee! Shiny Pokémon sparkle. They are rare, stronger, and harder to catch.',
     'The higher a wild Pokémon\'s level, the harder it is to catch. Lv 50s barely fit in a ball!',
     'Epic and legendary Pokémon roam the arena sometimes. Press Q to run if they are too strong.',
@@ -260,8 +261,16 @@ export class LobbyScene extends Phaser.Scene {
   upgrade() {
     if (this.mode !== 'walk' || !this.state.canUpgrade) return
     return this.call(async () => {
-      this.setState(await api.upgrade(this.state.sessionId))
-      this.walk(`${displayName(this.state.player)} was upgraded to Lv ${this.state.player.level}!`)
+      const { evolvedFrom, ...state } = await api.upgrade(this.state.sessionId)
+      this.setState(state)
+      const p = state.player
+      await loadSprites(this, [p])
+      this.player.setTexture(textureKey(p))
+      this.walk(
+        evolvedFrom
+          ? `What? ${capitalize(evolvedFrom)} evolved into ${displayName(p)}! Now Lv ${p.level}.`
+          : `${displayName(p)} was upgraded to Lv ${p.level}!`,
+      )
     })
   }
 

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { defaultStore } from './store.js'
 
 const POKEAPI = 'https://pokeapi.co/api/v2/pokemon'
+const POKEAPI_SPECIES = 'https://pokeapi.co/api/v2/pokemon-species'
 
 export const STARTERS = ['palkia', 'dialga', 'arceus', 'eternatus']
 
@@ -124,6 +125,32 @@ async function fetchSpecies(idOrName) {
   return promise
 }
 
+const evolutionCache = new Map()
+
+// Ids of the species this one evolves into next; empty when fully evolved.
+async function fetchEvolutions(id) {
+  if (evolutionCache.has(id)) return evolutionCache.get(id)
+  const getJson = async (url) => {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`PokéAPI ${url}: ${res.status}`)
+    return res.json()
+  }
+  const promise = (async () => {
+    const species = await getJson(`${POKEAPI_SPECIES}/${id}`)
+    const { chain } = await getJson(species.evolution_chain.url)
+    const find = (node) => (node.species.name === species.name ? node : node.evolves_to.map(find).find(Boolean))
+    return (find(chain)?.evolves_to ?? []).map((n) => Number(n.species.url.split('/').at(-2)))
+  })()
+  evolutionCache.set(id, promise)
+  promise.catch(() => evolutionCache.delete(id))
+  return promise
+}
+
+function boostedBase(base, { shiny, night }) {
+  const boost = (shiny ? SHINY_STAT_BONUS : 1) * (night ? NIGHT_STAT_BONUS : 1)
+  return boost === 1 ? base : Object.fromEntries(Object.entries(base).map(([k, v]) => [k, Math.round(v * boost)]))
+}
+
 function statsAt(base, level) {
   const stat = (b) => Math.floor((2 * b * level) / 100) + 5
   return {
@@ -162,10 +189,7 @@ function movesFor(species) {
 }
 
 function makeFighter(species, level, { shiny = false, night = false, rarity = null } = {}) {
-  const boost = (shiny ? SHINY_STAT_BONUS : 1) * (night ? NIGHT_STAT_BONUS : 1)
-  const base = boost === 1
-    ? species.base
-    : Object.fromEntries(Object.entries(species.base).map(([k, v]) => [k, Math.round(v * boost)]))
+  const base = boostedBase(species.base, { shiny, night })
   const stats = statsAt(base, level)
   const moves = movesFor(species)
   return {
@@ -239,7 +263,7 @@ export class GameError extends Error {
   }
 }
 
-export function createGame({ fetchPokemon = fetchSpecies, store = defaultStore() } = {}) {
+export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = fetchEvolutions, store = defaultStore() } = {}) {
   async function load(id) {
     const s = id && (await store.get(id))
     if (!s) throw new GameError('Unknown session. Start a new trial', 404)
@@ -393,6 +417,29 @@ export function createGame({ fetchPokemon = fetchSpecies, store = defaultStore()
       return 'blackout'
     }
     return 'ongoing'
+  }
+
+  // Turns the Pokémon into its next evolution (a random one when it branches, like Eevee).
+  // Keeps level, XP, shininess and night boost. Returns the old name, or null if it can't evolve.
+  async function evolve(p) {
+    const next = await fetchNextEvolutions(p.id).catch((err) => {
+      console.error(err)
+      return []
+    })
+    if (!next.length) return null
+    const species = await fetchPokemon(pick(next))
+    const from = p.name
+    Object.assign(p, {
+      id: species.id,
+      name: species.name,
+      types: species.types,
+      sprite: (p.shiny && species.shinySprite) || species.sprite,
+      backSprite: (p.shiny && species.shinyBackSprite) || species.backSprite,
+      base: boostedBase(species.base, p),
+      moves: movesFor(species),
+    })
+    p.pp = p.moves.map((m) => m.pp)
+    return from
   }
 
   function requireSlot(s, slot) {
@@ -552,9 +599,10 @@ export function createGame({ fetchPokemon = fetchSpecies, store = defaultStore()
       p.xp -= p.xpNext
       p.level += UPGRADE_LEVELS
       p.xpNext = p.level * 20
+      const evolvedFrom = await evolve(p)
       Object.assign(p, statsFor(p))
       p.hp = p.maxHp
-      return view(s)
+      return { ...view(s), evolvedFrom }
     }),
 
     end: withSession(async (s) => {

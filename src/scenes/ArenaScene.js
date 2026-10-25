@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { api } from '../api.js'
 import { Hud } from '../hud.js'
-import { Bar, RARITY_COLORS, bake, button, displayName, loadSprites, text, textureKey } from '../ui.js'
+import { Bar, RARITY_COLORS, bake, button, capitalize, displayName, loadSprites, text, textureKey } from '../ui.js'
 
 const HUD_HEIGHT = 70
 const PANEL_HEIGHT = 110
@@ -262,13 +262,23 @@ export class ArenaScene extends Phaser.Scene {
   upgrade() {
     if (this.mode !== 'explore' || !this.state.canUpgrade) return
     return this.run(async () => {
-      this.state = await api.upgrade(this.state.sessionId)
-      const p = this.state.player
+      const { evolvedFrom, ...state } = await api.upgrade(this.state.sessionId)
+      this.state = state
+      const p = state.player
+      await loadSprites(this, [p])
       this.player.setTint(0xffd54f)
       await this.tweenTo(this.player, { scale: SPRITE_SCALE * 1.4 }, 250)
+      if (evolvedFrom) {
+        this.cameras.main.flash(300, 255, 255, 255)
+        this.player.setTexture(textureKey(p))
+      }
       await this.tweenTo(this.player, { scale: SPRITE_SCALE }, 250)
       this.player.clearTint()
-      this.explore(`${displayName(p)} was upgraded to Lv ${p.level}! Power ${p.power}.`)
+      this.explore(
+        evolvedFrom
+          ? `What? ${capitalize(evolvedFrom)} evolved into ${displayName(p)}! Lv ${p.level}, Power ${p.power}.`
+          : `${displayName(p)} was upgraded to Lv ${p.level}! Power ${p.power}.`,
+      )
     })
   }
 

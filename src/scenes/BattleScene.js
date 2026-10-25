@@ -311,9 +311,9 @@ export class BattleScene extends Phaser.Scene {
     } else if (result === 'fainted') {
       this.partyMenu(true)
     } else if (result === 'blackout') {
-      this.message.setText('All your Pokémon fainted! You blacked out and were carried back to the lobby...')
+      this.message.setText('All your Pokémon are at 0 HP... GAME OVER!')
       await this.wait(2000)
-      this.finish('blackout', 'You blacked out! Visit Chansey at the Healing Center to restore your team.')
+      this.finish('blackout', 'Game over')
     } else {
       this.choose()
     }

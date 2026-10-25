@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { api } from '../api.js'
 import { Hud } from '../hud.js'
+import { showUpgradeCards } from '../upgradeCards.js'
 import { BALLS, RARITY_COLORS, TYPE_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
 
 const PANEL_TOP = 490
@@ -27,7 +28,7 @@ const TIPS = {
     'Fairy types are immune to Dragon moves. Switch with 1-4 if you get stuck!',
   ],
   eevee: [
-    'Vee! Press U when the upgrade button shows up. Pokémon that can evolve will evolve, like Magikarp into Gyarados!',
+    'Vee! When your XP bar fills you pick an upgrade card: more damage, attack first, or move faster. Pokémon that can evolve will evolve too!',
     'Vee! Shiny Pokémon sparkle. They are rare, stronger, and harder to catch.',
     'The higher a wild Pokémon\'s level, the harder it is to catch. Lv 50s barely fit in a ball!',
     'Epic and legendary Pokémon roam the arena sometimes. Press Q to run if they are too strong.',
@@ -38,7 +39,7 @@ const TIPS = {
     'Jiggly~ Catch a Titan and it glows with an aura that makes your whole team stronger!',
     'Jiggly~ Get a wild Pokémon below 30% HP, then press X to throw a ball.',
     'Your party holds 4 Pokémon. Extra catches go to the box in the Stats Hall.',
-    'If your whole team faints you black out. Chansey will patch everyone up here for free!',
+    'If your whole team hits 0 HP, it is GAME OVER and your score is final. Heal with Chansey often!',
   ],
 }
 
@@ -159,9 +160,11 @@ export class LobbyScene extends Phaser.Scene {
     this.mode = 'walk'
     this.panel.removeAll(true)
     this.message.setText(msg ?? 'Welcome to the lobby! Walk with WASD, press E near someone to interact, 1-4 to switch Pokémon.')
-    const opts = [{ label: 'ARENA ▼', action: () => this.enterArena(), color: '#c62828' }]
-    if (this.state.canUpgrade) opts.unshift({ label: '▲ UPGRADE [U]', action: () => this.upgrade(), color: '#2e7d32' })
-    opts.forEach((o, i) => this.panel.add(button(this, 400 + (i - (opts.length - 1) / 2) * 220, this.scale.height - 32, o.label, o.action, { color: o.color, width: 190 })))
+    this.panel.add(button(this, 400, this.scale.height - 32, 'ARENA ▼', () => this.enterArena(), { color: '#c62828', width: 190 }))
+    if (this.state.canUpgrade) {
+      this.mode = 'cards'
+      showUpgradeCards(this, this.state, (card) => this.upgrade(card))
+    }
   }
 
   dialog(msg, options = []) {
@@ -181,7 +184,6 @@ export class LobbyScene extends Phaser.Scene {
     if (this.mode === 'walk') {
       if (key === 'e' && this.target) this.target.action()
       else if (['1', '2', '3', '4'].includes(key)) this.swap(Number(key) - 1)
-      else if (key === 'u') this.upgrade()
       else if (key === 'p') this.showDex()
     } else if (this.mode === 'dialog' && (key === 'e' || key === ' ' || key === 'escape')) {
       this.walk()
@@ -279,19 +281,20 @@ export class LobbyScene extends Phaser.Scene {
     })
   }
 
-  upgrade() {
-    if (this.mode !== 'walk' || !this.state.canUpgrade) return
+  upgrade(card) {
     return this.call(async () => {
-      const { evolvedFrom, ...state } = await api.upgrade(this.state.sessionId)
+      const { evolvedFrom, ...state } = await api.upgrade(this.state.sessionId, card)
       this.setState(state)
       const p = state.player
       await loadSprites(this, [p])
       this.player.setTexture(textureKey(p))
       setAura(this.player, p.aura)
+      const perk = state.upgradeCards.find((c) => c.key === card)
+      const gained = perk ? ` ${perk.name} is now level ${perk.level}.` : ''
       this.walk(
         evolvedFrom
-          ? `What? ${capitalize(evolvedFrom)} evolved into ${displayName(p)}! Now Lv ${p.level}.`
-          : `${displayName(p)} was upgraded to Lv ${p.level}!`,
+          ? `What? ${capitalize(evolvedFrom)} evolved into ${displayName(p)}! Now Lv ${p.level}.${gained}`
+          : `${displayName(p)} reached Lv ${p.level}!${gained}`,
       )
     })
   }

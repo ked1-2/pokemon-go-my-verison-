@@ -134,6 +134,18 @@ const START_LEVEL = 20
 const STARTER_STATS = { maxHp: 300, attack: 200 }
 const PARTY_SIZE = 4
 const UPGRADE_LEVELS = 5
+
+// Raw stats are turned into capped game numbers, so no Pokémon gets too strong.
+// maxHit: one hit can take at most this share of the target's max HP.
+export const LIMITS = { level: 100, hp: 999, attack: 400, defense: 400, speed: 250, maxHit: 0.5 }
+const MOVE_SPEED = { min: 80, max: 360 }
+
+// When XP fills you pick one card. Each card stacks up to its max.
+export const UPGRADE_CARDS = {
+  power: { name: 'Power Up', desc: '+15% damage on every attack', max: 5, step: 0.15 },
+  quick: { name: 'Quick Strike', desc: 'You always attack first, +25 Speed', max: 3, step: 25 },
+  stride: { name: 'Swift Stride', desc: '+20% movement speed in the arena', max: 3, step: 0.2 },
+}
 const BLACKOUT_PENALTY = 150
 const WIN_HEAL = 0.25
 const CATCH_HP_RATIO = 0.3 // wild HP must be at or below this to throw a ball mid-battle
@@ -211,7 +223,24 @@ function statsFor(f) {
     stats.maxHp = Math.round((STARTER_STATS.maxHp * f.level) / START_LEVEL)
     stats.attack = Math.round((STARTER_STATS.attack * f.level) / START_LEVEL)
   }
+  stats.maxHp = Math.min(stats.maxHp, LIMITS.hp)
   return stats
+}
+
+const perksOf = (f) => ({ power: 0, quick: 0, stride: 0, ...f.perks })
+
+// The capped numbers battles and movement actually use.
+function gameStats(f) {
+  const perks = perksOf(f)
+  const { power, quick, stride } = UPGRADE_CARDS
+  return {
+    attack: Math.min(f.attack, LIMITS.attack),
+    defense: Math.min(f.defense, LIMITS.defense),
+    speed: Math.min(f.speed + perks.quick * quick.step, LIMITS.speed),
+    damageMult: 1 + perks.power * power.step,
+    firstStrike: perks.quick > 0,
+    move: Math.round(Math.min(MOVE_SPEED.max, Math.max(MOVE_SPEED.min, (100 + f.base.speed) * (1 + perks.stride * stride.step)))),
+  }
 }
 
 function makeStarter(species) {
@@ -267,7 +296,8 @@ const abilityOf = (f) => f.types[0]
 const pretty = (name) => name.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
 
 function power(f) {
-  return f.maxHp + f.attack + f.defense + f.speed
+  const g = gameStats(f)
+  return Math.min(f.maxHp, LIMITS.hp) + g.attack + g.defense + g.speed
 }
 
 function immune(moveType, defender) {
@@ -276,11 +306,15 @@ function immune(moveType, defender) {
 
 function damage(attacker, defender, movePower, { critRate = 1 / 16, mult = 1 } = {}) {
   const crit = Math.random() < critRate
-  const atk = attacker.attack * (attacker.fx?.atk ?? 1)
-  const def = defender.defense * (defender.fx?.def ?? 1)
-  const raw = (((2 * attacker.level) / 5 + 2) * movePower * atk) / def / 50 + 2
+  const a = gameStats(attacker)
+  const atk = a.attack * (attacker.fx?.atk ?? 1)
+  const def = gameStats(defender).defense * (defender.fx?.def ?? 1)
+  const level = Math.min(attacker.level, LIMITS.level)
+  const raw = (((2 * level) / 5 + 2) * movePower * atk) / def / 50 + 2
   const roll = 0.85 + Math.random() * 0.15
-  return { amount: Math.max(1, Math.floor(raw * roll * (crit ? 1.5 : 1) * mult)), crit }
+  const amount = Math.floor(raw * roll * (crit ? 1.5 : 1) * mult * a.damageMult)
+  const maxHit = Math.max(1, Math.ceil(defender.maxHp * LIMITS.maxHit))
+  return { amount: Math.max(1, Math.min(amount, maxHit)), crit }
 }
 
 export function catchChance(ballKey, wild) {
@@ -338,9 +372,28 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
   const active = (s) => s.party[s.active]
   const anyHealthy = (s) => s.party.some((m) => !m.fainted)
 
+  const openCards = (f) => Object.keys(UPGRADE_CARDS).filter((k) => perksOf(f)[k] < UPGRADE_CARDS[k].max)
+
+  // Fully levelled Pokémon with every card maxed have nothing left to gain.
   function canUpgrade(s) {
     const p = active(s)
-    return !s.finished && s.phase === 'explore' && !p.fainted && p.xp >= p.xpNext
+    const room = p.level < LIMITS.level || openCards(p).length > 0
+    return !s.finished && s.phase === 'explore' && !p.fainted && p.xp >= p.xpNext && room
+  }
+
+  // The three upgrade cards, with the game numbers before and after picking each.
+  function cardsView(p) {
+    const now = gameStats(p)
+    return Object.entries(UPGRADE_CARDS).map(([key, c]) => {
+      const level = perksOf(p)[key]
+      const next = gameStats({ ...p, perks: { ...perksOf(p), [key]: Math.min(level + 1, c.max) } })
+      const preview = {
+        power: `Damage ×${now.damageMult.toFixed(2)} → ×${next.damageMult.toFixed(2)}`,
+        quick: `Speed ${now.speed} → ${next.speed}${now.firstStrike ? '' : ' · attack first'}`,
+        stride: `Move ${now.move} → ${next.move}`,
+      }[key]
+      return { key, name: c.name, desc: c.desc, level, max: c.max, maxed: level >= c.max, preview }
+    })
   }
 
   function catchable(s) {
@@ -371,7 +424,7 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
       uid: m.uid, id: m.id, name: m.name, types: m.types, sprite: m.sprite, backSprite: m.backSprite,
       level: m.level, hp: m.hp, maxHp: m.maxHp, baseSpeed: m.base.speed, power: Math.round(power(m) * boost),
       xp: m.xp, xpNext: m.xpNext, fainted: m.fainted, shiny: m.shiny, rarity: m.rarity,
-      aura: Boolean(m.aura), ability: abilityView(m),
+      aura: Boolean(m.aura), ability: abilityView(m), perks: perksOf(m), game: gameStats(m),
     }
   }
 
@@ -406,6 +459,7 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
       catchChances: w ? Object.fromEntries(Object.keys(BALLS).map((k) => [k, Math.round(catchChance(k, w) * 100)])) : null,
       balls: { ...s.balls },
       canUpgrade: canUpgrade(s),
+      upgradeCards: cardsView(p),
       canEnterArena: !s.finished && anyHealthy(s),
       caught: s.caught.map(({ name, level, ball, shiny, rarity }) => ({ name, level, ball, shiny, rarity })),
       eliminated: s.eliminated.map(({ name, level, titan }) => ({ name, level, titan: Boolean(titan) })),
@@ -648,10 +702,11 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
         s.phase = 'fainted' // must send in another party member
         return 'fainted'
       }
-      // The whole party is down: black out and wake up in the lobby.
+      // The whole party is at 0 HP: game over, the trial ends and the score is final.
       s.blackouts += 1
-      s.phase = 'explore'
       s.location = 'lobby'
+      s.finished = true
+      s.phase = 'done'
       return 'blackout'
     }
     return 'ongoing'
@@ -777,7 +832,8 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
       p.pp[ability] -= 1
 
       const events = []
-      const playerFirst = p.speed >= s.wild.speed
+      const mine = gameStats(p)
+      const playerFirst = mine.firstStrike || mine.speed >= gameStats(s.wild).speed
       const order = playerFirst ? ['player', 'wild'] : ['wild', 'player']
       for (const actor of order) {
         events.push(...turn(s, actor, ability))
@@ -850,11 +906,17 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
       return view(s)
     }),
 
-    upgrade: withSession(async (s) => {
+    upgrade: withSession(async (s, { card }) => {
       if (!canUpgrade(s)) throw new GameError('Your Pokémon cannot be upgraded right now')
       const p = active(s)
+      const open = openCards(p)
+      if (open.length) {
+        if (!UPGRADE_CARDS[card]) throw new GameError('Pick one of the upgrade cards')
+        if (!open.includes(card)) throw new GameError(`${UPGRADE_CARDS[card].name} is already maxed out`)
+        p.perks = { ...perksOf(p), [card]: perksOf(p)[card] + 1 }
+      }
       p.xp -= p.xpNext
-      p.level += UPGRADE_LEVELS
+      p.level = Math.min(LIMITS.level, p.level + UPGRADE_LEVELS)
       p.xpNext = p.level * 20
       const evolvedFrom = await evolve(s, p)
       Object.assign(p, statsFor(p))

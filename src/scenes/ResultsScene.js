@@ -7,13 +7,14 @@ export class ResultsScene extends Phaser.Scene {
     super('results')
   }
 
-  init({ sessionId }) {
+  init({ sessionId, gameOver = false }) {
     this.sessionId = sessionId
+    this.gameOver = gameOver
   }
 
   create() {
     const { width } = this.scale
-    text(this, width / 2, 50, 'TRIAL COMPLETE', {
+    text(this, width / 2, 50, this.gameOver ? 'GAME OVER' : 'TRIAL COMPLETE', {
       fontSize: '38px',
       fontStyle: 'bold',
       color: '#ffd54f',

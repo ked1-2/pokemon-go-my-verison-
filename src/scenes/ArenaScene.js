@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { api } from '../api.js'
 import { Hud } from '../hud.js'
+import { showUpgradeCards } from '../upgradeCards.js'
 import { Bar, RARITY_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
 
 const HUD_HEIGHT = 70
@@ -135,18 +136,17 @@ export class ArenaScene extends Phaser.Scene {
       { label: 'FIGHT! [E]', color: '#c62828', action: () => this.fight() },
       { label: 'LOBBY [L]', color: '#455a64', action: () => this.toLobby() },
     ]
-    if (this.state.canUpgrade) opts.splice(1, 0, { label: '▲ UPGRADE [U]', color: '#2e7d32', action: () => this.upgrade() })
     opts.forEach((o, i) =>
       this.panel.add(button(this, 400 + (i - (opts.length - 1) / 2) * 210, this.scale.height - 30, o.label, o.action, { color: o.color, width: 180 })),
     )
     this.hud.update(this.state)
+    if (this.state.canUpgrade) this.offerUpgrade()
   }
 
   onKey(key) {
     if (this.mode !== 'explore') return
     if (key === 'e') this.fight()
     else if (key === 'l') this.toLobby()
-    else if (key === 'u') this.upgrade()
     else if (['1', '2', '3', '4'].includes(key)) this.swap(Number(key) - 1)
   }
 
@@ -173,7 +173,7 @@ export class ArenaScene extends Phaser.Scene {
       const up = this.cursors.up.isDown || this.wasd.W.isDown
       const down = this.cursors.down.isDown || this.wasd.S.isDown
       const dir = new Phaser.Math.Vector2((right ? 1 : 0) - (left ? 1 : 0), (down ? 1 : 0) - (up ? 1 : 0))
-      dir.normalize().scale(100 + this.state.player.baseSpeed)
+      dir.normalize().scale(this.state.player.game.move)
       this.player.setVelocity(dir.x, dir.y)
       if (dir.x !== 0) this.player.setFlipX(dir.x > 0) // front sprites face left
 
@@ -232,7 +232,7 @@ export class ArenaScene extends Phaser.Scene {
     this.input.keyboard.resetKeys()
     this.cameras.main.setZoom(1).centerOn(this.scale.width / 2, this.scale.height / 2).fadeIn(300)
     if (outcome === 'blackout') {
-      this.scene.start('lobby', { state, message })
+      this.scene.start('results', { sessionId: state.sessionId, gameOver: true })
       return
     }
     await loadSprites(this, [...state.party, state.wild])
@@ -271,10 +271,21 @@ export class ArenaScene extends Phaser.Scene {
     })
   }
 
-  upgrade() {
-    if (this.mode !== 'explore' || !this.state.canUpgrade) return
+  // XP is full: pause the arena until a card is picked.
+  offerUpgrade() {
+    this.mode = 'cards'
+    this.player.setVelocity(0, 0)
+    this.wild?.setVelocity(0, 0)
+    this.physics.pause()
+    showUpgradeCards(this, this.state, (card) => {
+      this.physics.resume()
+      this.upgrade(card)
+    })
+  }
+
+  upgrade(card) {
     return this.run(async () => {
-      const { evolvedFrom, ...state } = await api.upgrade(this.state.sessionId)
+      const { evolvedFrom, ...state } = await api.upgrade(this.state.sessionId, card)
       this.state = state
       const p = state.player
       await loadSprites(this, [p])
@@ -286,10 +297,12 @@ export class ArenaScene extends Phaser.Scene {
       }
       await this.tweenTo(this.player, { scale: SPRITE_SCALE }, 250)
       this.player.clearTint()
+      const perk = state.upgradeCards.find((c) => c.key === card)
+      const gained = perk ? ` ${perk.name} is now level ${perk.level}.` : ''
       this.explore(
         evolvedFrom
-          ? `What? ${capitalize(evolvedFrom)} evolved into ${displayName(p)}! Lv ${p.level}, Power ${p.power}.`
-          : `${displayName(p)} was upgraded to Lv ${p.level}! Power ${p.power}.`,
+          ? `What? ${capitalize(evolvedFrom)} evolved into ${displayName(p)}! Lv ${p.level}, Power ${p.power}.${gained}`
+          : `${displayName(p)} reached Lv ${p.level}! Power ${p.power}.${gained}`,
       )
     })
   }

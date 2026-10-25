@@ -25,7 +25,7 @@ export const api = {
   run: (id) => post('run', id),
   catch: (id, ball) => post('catch', id, { ball }),
   eliminate: (id) => post('eliminate', id),
-  upgrade: (id) => post('upgrade', id),
+  upgrade: (id, card) => post('upgrade', id, { card }),
   end: (id) => post('end', id),
   results: (id) => post('results', id),
 }

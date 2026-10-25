@@ -1,6 +1,7 @@
 // Authoritative game rules. The client only sends intents; every spawn, roll,
 // battle outcome, catch, heal, upgrade and score is decided here.
 import { randomUUID } from 'node:crypto'
+import { defaultStore } from './store.js'
 
 const POKEAPI = 'https://pokeapi.co/api/v2/pokemon'
 
@@ -238,13 +239,22 @@ export class GameError extends Error {
   }
 }
 
-export function createGame({ fetchPokemon = fetchSpecies } = {}) {
-  const sessions = new Map()
-
-  function get(id) {
-    const s = sessions.get(id)
-    if (!s) throw new GameError('Unknown session', 404)
+export function createGame({ fetchPokemon = fetchSpecies, store = defaultStore() } = {}) {
+  async function load(id) {
+    const s = id && (await store.get(id))
+    if (!s) throw new GameError('Unknown session. Start a new trial', 404)
     return s
+  }
+
+  // Loads a session, runs an action on it, and saves it back if anything changed.
+  function withSession(action) {
+    return async (args) => {
+      const s = await load(args.sessionId)
+      const before = JSON.stringify(s)
+      const result = await action(s, args)
+      if (JSON.stringify(s) !== before) await store.set(s.id, s)
+      return result
+    }
   }
 
   const active = (s) => s.party[s.active]
@@ -419,16 +429,13 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
         encounters: 0,
         finished: false,
       }
-      sessions.set(s.id, s)
+      await store.set(s.id, s)
       return view(s)
     },
 
-    state({ sessionId }) {
-      return view(get(sessionId))
-    },
+    state: withSession(async (s) => view(s)),
 
-    async enter({ sessionId }) {
-      const s = get(sessionId)
+    enter: withSession(async (s) => {
       if (s.finished) throw new GameError('The trial is over')
       if (s.location !== 'lobby') throw new GameError('You are already in the arena')
       if (!anyHealthy(s)) throw new GameError('Your whole team has fainted. Visit the Healing Center first')
@@ -437,17 +444,15 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
       if (!s.wild) await spawnWild(s)
       s.phase = 'explore'
       return view(s)
-    },
+    }),
 
-    leave({ sessionId }) {
-      const s = get(sessionId)
+    leave: withSession(async (s) => {
       if (s.location !== 'arena' || s.phase !== 'explore') throw new GameError('You cannot leave right now')
       s.location = 'lobby'
       return view(s)
-    },
+    }),
 
-    heal({ sessionId }) {
-      const s = get(sessionId)
+    heal: withSession(async (s) => {
       if (s.location !== 'lobby') throw new GameError('The Healing Center is in the lobby')
       for (const m of [...s.party, ...s.box]) {
         m.hp = m.maxHp
@@ -456,27 +461,24 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
       }
       for (const [k, b] of Object.entries(BALLS)) s.balls[k] = Math.max(s.balls[k], b.start)
       return view(s)
-    },
+    }),
 
-    swap({ sessionId, slot }) {
-      const s = get(sessionId)
+    swap: withSession(async (s, { slot }) => {
       if (s.phase !== 'explore') throw new GameError('Use the SWITCH menu during battle')
       requireSlot(s, slot)
       s.active = slot
       return view(s)
-    },
+    }),
 
-    battle({ sessionId }) {
-      const s = get(sessionId)
+    battle: withSession(async (s) => {
       if (s.location !== 'arena' || s.phase !== 'explore' || !s.wild) throw new GameError('No wild Pokémon to battle')
       if (active(s).fainted) throw new GameError('Switch to a healthy Pokémon first')
       s.phase = 'battle'
       for (const m of s.party) m.pp = m.moves.map((mv) => mv.pp)
       return view(s)
-    },
+    }),
 
-    attack({ sessionId, ability }) {
-      const s = get(sessionId)
+    attack: withSession(async (s, { ability }) => {
       if (s.phase !== 'battle') throw new GameError('You are not in a battle')
       const p = active(s)
       if (!p.moves[ability]) throw new GameError('Unknown ability')
@@ -490,10 +492,9 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
         if (p.hp === 0 || s.wild.hp === 0) break
       }
       return { events, result: settle(s), state: view(s) }
-    },
+    }),
 
-    switch({ sessionId, slot }) {
-      const s = get(sessionId)
+    switch: withSession(async (s, { slot }) => {
       if (s.phase !== 'battle' && s.phase !== 'fainted') throw new GameError('You are not in a battle')
       if (slot === s.active) throw new GameError('That Pokémon is already battling')
       requireSlot(s, slot)
@@ -503,18 +504,16 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
       // Switching voluntarily costs your turn; replacing a fainted Pokémon is free.
       const events = forced ? [] : [wildAct(s)]
       return { events, result: forced ? 'ongoing' : settle(s), state: view(s) }
-    },
+    }),
 
-    async run({ sessionId }) {
-      const s = get(sessionId)
+    run: withSession(async (s) => {
       if (s.phase !== 'battle') throw new GameError('You are not in a battle')
       const fled = s.wild.name
       await spawnWild(s) // the old one is gone; something new wanders in
       return { fled, state: view(s) }
-    },
+    }),
 
-    async catch({ sessionId, ball }) {
-      const s = get(sessionId)
+    catch: withSession(async (s, { ball }) => {
       if (!catchable(s)) throw new GameError('Weaken the wild Pokémon before throwing a ball')
       if (!BALLS[ball]) throw new GameError('Unknown ball')
       if (s.balls[ball] <= 0) throw new GameError(`No ${BALLS[ball].name}s left`)
@@ -538,18 +537,16 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
         result = settle(s)
       }
       return { caught, ball, pokemon: wild.name, destination, events, result, state: view(s) }
-    },
+    }),
 
-    async eliminate({ sessionId }) {
-      const s = get(sessionId)
+    eliminate: withSession(async (s) => {
       if (s.phase !== 'won') throw new GameError('Win the battle before eliminating')
       s.eliminated.push({ name: s.wild.name, level: s.wild.level })
       await resolveEncounter(s)
       return view(s)
-    },
+    }),
 
-    upgrade({ sessionId }) {
-      const s = get(sessionId)
+    upgrade: withSession(async (s) => {
       if (!canUpgrade(s)) throw new GameError('Your Pokémon cannot be upgraded right now')
       const p = active(s)
       p.xp -= p.xpNext
@@ -558,20 +555,18 @@ export function createGame({ fetchPokemon = fetchSpecies } = {}) {
       Object.assign(p, statsFor(p))
       p.hp = p.maxHp
       return view(s)
-    },
+    }),
 
-    end({ sessionId }) {
-      const s = get(sessionId)
+    end: withSession(async (s) => {
       if (s.location !== 'lobby') throw new GameError('Return to the lobby to end the trial')
       s.finished = true
       s.phase = 'done'
       return view(s)
-    },
+    }),
 
-    results({ sessionId }) {
-      const s = get(sessionId)
+    results: withSession(async (s) => {
       if (!s.finished) throw new GameError('The trial is not finished yet')
       return { ...view(s), breakdown: score(s) }
-    },
+    }),
   }
 }

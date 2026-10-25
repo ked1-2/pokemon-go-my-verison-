@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { api } from '../api.js'
 import { Hud } from '../hud.js'
 import { showUpgradeCards } from '../upgradeCards.js'
-import { BALLS, RARITY_COLORS, TYPE_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
+import { AURA_COLOR, BALLS, RARITY_COLORS, TYPE_COLORS, bake, button, capitalize, displayName, loadSprites, setAura, text, textureKey } from '../ui.js'
 
 const PANEL_TOP = 490
 const FIELD_TOP = 70
@@ -131,7 +131,7 @@ export class LobbyScene extends Phaser.Scene {
     this.interactables = [
       { sprite: npc(113, 150, 262), label: 'Heal with Chansey', action: () => this.heal() },
       { sprite: npc(122, 650, 262), label: 'Stats with Mr. Mime', action: () => this.showStats() },
-      { sprite: npc(137, 400, 246), label: 'Open the Pokédex [P]', action: () => this.showDex() },
+      { sprite: npc(137, 400, 246), label: 'Open the Pokédex [P]', action: () => this.openDex() },
       { x: 400, y: PANEL_TOP - 30, label: 'Enter the arena', action: () => this.enterArena() },
       { x: 90, y: PANEL_TOP - 40, label: 'End the trial', action: () => this.confirmEnd() },
     ]
@@ -184,7 +184,7 @@ export class LobbyScene extends Phaser.Scene {
     if (this.mode === 'walk') {
       if (key === 'e' && this.target) this.target.action()
       else if (['1', '2', '3', '4'].includes(key)) this.swap(Number(key) - 1)
-      else if (key === 'p') this.showDex()
+      else if (key === 'p') this.openDex()
     } else if (this.mode === 'dialog' && (key === 'e' || key === ' ' || key === 'escape')) {
       this.walk()
     } else if (this.mode === 'confirm') {
@@ -193,11 +193,10 @@ export class LobbyScene extends Phaser.Scene {
       this.statsLayer.destroy()
       this.walk()
     } else if (this.mode === 'dex') {
-      if (key === 'e' || key === 'escape' || key === 'p') {
-        this.dexLayer.destroy()
-        this.walk()
-      } else if (key === 'arrowright' || key === 'd') this.showDex(this.dexPage + 1)
-      else if (key === 'arrowleft' || key === 'a') this.showDex(this.dexPage - 1)
+      if (key === 'e' || key === 'escape' || key === 'p') this.closeDex()
+      else if (key === 'q') this.setDexTab(this.dexTab === 'species' ? 'equip' : 'species')
+      else if (key === 'arrowright' || key === 'd') this.turnDexPage(1)
+      else if (key === 'arrowleft' || key === 'a') this.turnDexPage(-1)
     }
   }
 
@@ -373,51 +372,181 @@ export class LobbyScene extends Phaser.Scene {
 
   // ---------- pokédex ----------
 
-  async showDex(page = 0) {
-    const entries = this.state.dex
-    const perPage = DEX_COLS * DEX_ROWS
-    const pages = Math.max(1, Math.ceil(entries.length / perPage))
-    page = Phaser.Math.Clamp(page, 0, pages - 1)
-    if (this.mode === 'dex' && page === this.dexPage) return
-    if (this.mode !== 'walk' && this.mode !== 'dex') return
+  openDex(tab = 'species') {
+    if (this.mode !== 'walk') return
     this.mode = 'dex'
-    this.dexPage = page
     this.prompt.setVisible(false)
     this.player.setVelocity(0, 0)
-    const shown = entries.slice(page * perPage, (page + 1) * perPage)
-    await loadSprites(this, shown)
+    this.dexTab = tab
+    this.dexPage = 0
+    this.equipPick = null
+    this.dexHint = null
+    this.renderDex()
+  }
+
+  closeDex() {
+    this.dexLayer?.destroy()
+    this.dexLayer = null
+    this.walk()
+  }
+
+  setDexTab(tab) {
+    if (tab === this.dexTab) return
+    this.dexTab = tab
+    this.dexPage = 0
+    this.equipPick = null
+    this.dexHint = null
+    this.renderDex()
+  }
+
+  turnDexPage(step) {
+    const page = Phaser.Math.Clamp(this.dexPage + step, 0, this.dexPages - 1)
+    if (page === this.dexPage) return
+    this.dexPage = page
+    this.renderDex()
+  }
+
+  async renderDex() {
+    const render = (this.dexRender = (this.dexRender ?? 0) + 1)
+    const s = this.state
+    await loadSprites(this, this.dexTab === 'species' ? s.dex : [...s.party, ...s.box])
+    if (render !== this.dexRender || this.mode !== 'dex') return // closed, or a newer render started
     this.dexLayer?.destroy()
     const layer = this.add.container(0, 0).setDepth(50)
     this.dexLayer = layer
     layer.add(this.add.rectangle(400, 300, 800, 600, 0x1a1033, 0.97))
-    layer.add(text(this, 400, 16, 'POKÉDEX', { fontSize: '28px', fontStyle: 'bold', color: '#b39ddb' }).setOrigin(0.5, 0))
-    const caught = entries.filter((e) => e.count > 0).length
-    layer.add(text(this, 400, 52, `${entries.length} species registered  ·  ${caught} caught  ·  page ${page + 1}/${pages}`, { fontSize: '13px', color: '#d1c4e9' }).setOrigin(0.5, 0))
+    layer.add(text(this, 400, 8, 'POKÉDEX', { fontSize: '26px', fontStyle: 'bold', color: '#b39ddb' }).setOrigin(0.5, 0))
+    const tabs = [
+      { key: 'species', label: 'SPECIES', x: 310 },
+      { key: 'equip', label: 'EQUIP', x: 490 },
+    ]
+    for (const t of tabs) {
+      const on = t.key === this.dexTab
+      layer.add(button(this, t.x, 56, `${t.label}${on ? '' : ' [Q]'}`, () => this.setDexTab(t.key), { width: 160, color: on ? '#7e57c2' : '#311b92', fontSize: '13px' }))
+    }
 
-    if (!entries.length) layer.add(text(this, 400, 280, 'No Pokémon yet. Go catch some in the arena!', { fontSize: '16px' }).setOrigin(0.5))
-    shown.forEach((e, i) => {
+    if (this.dexTab === 'species') this.drawSpecies(layer)
+    else this.drawEquip(layer)
+
+    const nav = [
+      { label: '◀ Prev [←]', x: 230, disabled: this.dexPage === 0, action: () => this.turnDexPage(-1) },
+      { label: 'Close [E]', x: 400, action: () => this.closeDex() },
+      { label: 'Next [→] ▶', x: 570, disabled: this.dexPage >= this.dexPages - 1, action: () => this.turnDexPage(1) },
+    ]
+    for (const n of nav) layer.add(button(this, n.x, 574, n.label, n.action, { width: 150, disabled: n.disabled, color: '#5e35b1' }))
+  }
+
+  // Every species you've caught, evolved into, or started with.
+  drawSpecies(layer) {
+    const entries = this.state.dex
+    const perPage = DEX_COLS * DEX_ROWS
+    this.dexPages = Math.max(1, Math.ceil(entries.length / perPage))
+    const caught = entries.filter((e) => e.count > 0).length
+    layer.add(text(this, 400, 80, `${entries.length} species registered  ·  ${caught} caught  ·  page ${this.dexPage + 1}/${this.dexPages}`, { fontSize: '13px', color: '#d1c4e9' }).setOrigin(0.5, 0))
+    if (!entries.length) layer.add(text(this, 400, 300, 'No Pokémon yet. Go catch some in the arena!', { fontSize: '16px' }).setOrigin(0.5))
+
+    entries.slice(this.dexPage * perPage, (this.dexPage + 1) * perPage).forEach((e, i) => {
       const x = 22 + (i % DEX_COLS) * 191
-      const y = 80 + Math.floor(i / DEX_COLS) * 112
+      const y = 102 + Math.floor(i / DEX_COLS) * 110
       const typeColor = TYPE_COLORS[e.types[0]] ?? 0x9575cd
       layer.add(this.add.rectangle(x, y, 183, 104, 0x2a1f4d).setOrigin(0).setStrokeStyle(2, typeColor))
       layer.add(this.add.image(x + 34, y + 44, textureKey(e)).setScale(0.75))
       layer.add(text(this, x + 70, y + 6, `#${String(e.id).padStart(3, '0')}`, { fontSize: '10px', color: '#9e9e9e' }))
       layer.add(text(this, x + 70, y + 19, `${e.shinyCaught ? '★ ' : ''}${capitalize(e.name)}`, { fontSize: '12px', fontStyle: 'bold', color: e.shinyCaught ? '#ffd54f' : '#ffffff', fixedWidth: 110 }))
-      e.types.forEach((t, j) => {
-        const hex = `#${(TYPE_COLORS[t] ?? 0x9e9e9e).toString(16).padStart(6, '0')}`
-        layer.add(text(this, x + 70 + j * 52, y + 38, t.toUpperCase(), { fontSize: '9px', fontStyle: 'bold', color: '#1a1033', backgroundColor: hex, padding: { x: 3, y: 1 } }))
-      })
+      e.types.forEach((t, j) => layer.add(this.typeChip(x + 70 + j * 52, y + 38, t)))
       layer.add(text(this, x + 70, y + 56, e.ability.name, { fontSize: '11px', fontStyle: 'bold', color: '#80cbc4' }))
       const how = e.count > 0 ? `Caught ×${e.count}` : e.how === 'starter' ? 'Starter' : 'Evolved'
       layer.add(text(this, x + 70, y + 72, how, { fontSize: '11px', color: '#c5cae9' }))
       layer.add(text(this, x + 8, y + 86, e.ability.desc, { fontSize: '9px', color: '#9fa8da', fixedWidth: 170 }))
     })
+  }
 
-    const nav = [
-      { label: '◀ Prev [←]', x: 230, disabled: page === 0, action: () => this.showDex(page - 1) },
-      { label: 'Close [E]', x: 400, action: () => this.onKey('escape') },
-      { label: 'Next [→] ▶', x: 570, disabled: page >= pages - 1, action: () => this.showDex(page + 1) },
-    ]
-    for (const n of nav) layer.add(button(this, n.x, 560, n.label, n.action, { width: 150, disabled: n.disabled, color: '#5e35b1' }))
+  // Your party on the left, the caught Pokémon in your box on the right.
+  drawEquip(layer) {
+    const s = this.state
+    const perPage = 8
+    this.dexPages = Math.max(1, Math.ceil(s.box.length / perPage))
+    this.dexPage = Math.min(this.dexPage, this.dexPages - 1)
+    const full = s.party.length >= 4
+    const hint = this.dexHint ?? (this.equipPick
+      ? 'Party is full: pick a party slot to swap with.'
+      : 'Equip caught Pokémon into your party, or send party members to the box.')
+    layer.add(text(this, 400, 80, hint, { fontSize: '13px', color: this.dexHint ? '#ef9a9a' : '#d1c4e9' }).setOrigin(0.5, 0))
+
+    layer.add(text(this, 22, 100, `PARTY (${s.party.length}/4)`, { fontSize: '13px', fontStyle: 'bold', color: '#b39ddb' }))
+    for (let i = 0; i < 4; i++) {
+      const m = s.party[i]
+      const y = 120 + i * 108
+      layer.add(this.add.rectangle(22, y, 350, 100, 0x2a1f4d).setOrigin(0).setStrokeStyle(2, i === s.active ? 0xffd54f : 0x5e35b1))
+      if (!m) {
+        layer.add(text(this, 120, y + 40, 'Empty slot', { fontSize: '13px', color: '#7e57c2' }))
+        continue
+      }
+      this.memberCard(layer, m, 22, y)
+      if (this.equipPick) {
+        layer.add(button(this, 316, y + 50, 'Swap in ⇄', () => this.equip(this.equipPick, i), { width: 90, fontSize: '12px', color: '#2e7d32' }))
+      } else if (s.party.length > 1) {
+        layer.add(button(this, 316, y + 50, 'To box', () => this.unequip(m.uid), { width: 90, fontSize: '12px', color: '#6d4c41' }))
+      }
+    }
+
+    layer.add(text(this, 392, 100, `CAUGHT · BOX (${s.box.length})  page ${this.dexPage + 1}/${this.dexPages}`, { fontSize: '13px', fontStyle: 'bold', color: '#b39ddb' }))
+    if (!s.box.length) layer.add(text(this, 590, 300, 'No Pokémon in the box.\nCatch more in the arena!', { fontSize: '14px', align: 'center', color: '#9fa8da' }).setOrigin(0.5))
+    s.box.slice(this.dexPage * perPage, (this.dexPage + 1) * perPage).forEach((m, i) => {
+      const x = 392 + (i % 2) * 196
+      const y = 120 + Math.floor(i / 2) * 108
+      const picked = this.equipPick === m.uid
+      layer.add(this.add.rectangle(x, y, 188, 100, picked ? 0x4527a0 : 0x2a1f4d).setOrigin(0).setStrokeStyle(2, picked ? 0xffd54f : 0x5e35b1))
+      if (m.aura) layer.add(this.add.circle(x + 30, y + 40, 30, AURA_COLOR, 0.35))
+      layer.add(this.add.image(x + 30, y + 40, textureKey(m)).setScale(0.6))
+      layer.add(text(this, x + 60, y + 8, displayName(m), { fontSize: '12px', fontStyle: 'bold', color: RARITY_COLORS[m.rarity] ?? '#ffffff', fixedWidth: 124 }))
+      layer.add(text(this, x + 60, y + 26, `Lv ${m.level}  ·  Power ${m.power}`, { fontSize: '10px', color: '#c5cae9' }))
+      m.types.forEach((t, j) => layer.add(this.typeChip(x + 60 + j * 52, y + 44, t)))
+      const label = picked ? 'Cancel' : 'Equip'
+      const action = picked ? () => this.pickForEquip(null) : full ? () => this.pickForEquip(m.uid) : () => this.equip(m.uid)
+      layer.add(button(this, x + 94, y + 82, label, action, { width: 110, fontSize: '12px', color: picked ? '#455a64' : '#2e7d32' }))
+    })
+  }
+
+  memberCard(layer, m, x, y) {
+    if (m.aura) layer.add(this.add.circle(x + 40, y + 44, 34, AURA_COLOR, 0.35))
+    layer.add(this.add.image(x + 40, y + 44, textureKey(m)).setScale(0.7).setAlpha(m.fainted ? 0.4 : 1))
+    layer.add(text(this, x + 82, y + 8, `${displayName(m)}  Lv ${m.level}`, { fontSize: '13px', fontStyle: 'bold', color: RARITY_COLORS[m.rarity] ?? '#ffffff' }))
+    m.types.forEach((t, j) => layer.add(this.typeChip(x + 82 + j * 52, y + 30, t)))
+    layer.add(text(this, x + 82, y + 50, `HP ${m.hp}/${m.maxHp}  ·  Power ${m.power}${m.aura ? '  ✦' : ''}`, { fontSize: '11px', color: m.fainted ? '#ef9a9a' : '#ffffff' }))
+    layer.add(text(this, x + 82, y + 68, m.ability.name, { fontSize: '11px', fontStyle: 'bold', color: '#80cbc4' }))
+  }
+
+  typeChip(x, y, type) {
+    const hex = `#${(TYPE_COLORS[type] ?? 0x9e9e9e).toString(16).padStart(6, '0')}`
+    return text(this, x, y, type.toUpperCase(), { fontSize: '9px', fontStyle: 'bold', color: '#1a1033', backgroundColor: hex, padding: { x: 3, y: 1 } })
+  }
+
+  pickForEquip(uid) {
+    this.equipPick = uid
+    this.dexHint = null
+    this.renderDex()
+  }
+
+  equip(uid, slot) {
+    return this.changeTeam(() => api.equip(this.state.sessionId, uid, slot))
+  }
+
+  unequip(uid) {
+    return this.changeTeam(() => api.unequip(this.state.sessionId, uid))
+  }
+
+  async changeTeam(request) {
+    try {
+      this.setState(await request())
+      this.dexHint = null
+      await loadSprites(this, [this.state.player])
+      this.player.setTexture(textureKey(this.state.player))
+      setAura(this.player, this.state.player.aura)
+    } catch (err) {
+      this.dexHint = err.message
+    }
+    this.equipPick = null
+    this.renderDex()
   }
 }

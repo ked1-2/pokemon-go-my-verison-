@@ -1,4 +1,5 @@
 import { createGame, GameError } from './game.js'
+import typeHandler from '../api/type.js'
 
 const ROUTES = {
   'GET /api/starters': (game) => game.starters(),
@@ -8,6 +9,8 @@ const ROUTES = {
   'POST /api/leave': (game, body) => game.leave(body),
   'POST /api/heal': (game, body) => game.heal(body),
   'POST /api/swap': (game, body) => game.swap(body),
+  'POST /api/equip': (game, body) => game.equip(body),
+  'POST /api/unequip': (game, body) => game.unequip(body),
   'POST /api/battle': (game, body) => game.battle(body),
   'POST /api/attack': (game, body) => game.attack(body),
   'POST /api/switch': (game, body) => game.switch(body),
@@ -36,6 +39,7 @@ export function createApiHandler(game = createGame()) {
   return async (req, res, next) => {
     const path = req.url.split('?')[0]
     if (!path.startsWith('/api/')) return next?.()
+    if (path === '/api/type') return typeHandler(req, res) // the same handler Vercel serves from api/type.js
     const route = ROUTES[`${req.method} ${path}`]
     if (!route) return send(res, 404, { error: 'Not found' })
     try {

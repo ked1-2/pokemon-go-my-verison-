@@ -465,7 +465,8 @@ export class BattleScene extends Phaser.Scene {
     if (ev.immune) {
       // The attack passes harmlessly through the immune Pokémon.
       this.tweens.add({ targets: defender, alpha: 0.3, yoyo: true, repeat: 1, duration: 120 })
-      this.message.setText(`It doesn't affect ${displayName(this.state.wild)}... (${this.state.wild.types.map((t) => t.toUpperCase()).join('/')} is immune to ${ev.type.toUpperCase()})`)
+      const target = isPlayer ? this.state.wild : this.state.player
+      this.message.setText(`It doesn't affect ${displayName(target)}... (${target.types.map((t) => t.toUpperCase()).join('/')} takes no damage from ${ev.type.toUpperCase()})`)
       return this.wait(1200)
     }
     if (ev.miss) {
@@ -479,6 +480,10 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.shake(ev.kind === 'signature' ? 350 : 140, ev.crit || ev.kind === 'signature' ? 0.02 : 0.006)
     this.blink(defender)
     await this.updateHp(ev)
+    if (ev.superEffective) {
+      this.message.setText('Super effective!')
+      await this.wait(700)
+    }
     if (ev.crit) {
       this.message.setText('A critical hit!')
       await this.wait(550)
@@ -525,7 +530,7 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.shake(300, 0.012)
     this.blink(this.wildSprite)
     await this.updateHp(ev)
-    this.message.setText(`Your team dealt ${ev.damage} damage to the Titan!`)
+    this.message.setText(`${ev.superEffective ? 'Super effective! ' : ''}Your team dealt ${ev.damage} damage to the Titan!`)
     await this.wait(900)
     await this.checkFaint(ev)
   }

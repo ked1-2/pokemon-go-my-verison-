@@ -2,6 +2,7 @@
 // battle outcome, catch, heal, upgrade and score is decided here.
 import { randomUUID } from 'node:crypto'
 import { defaultStore } from './store.js'
+import { effectiveness, fetchTypeChart } from './types.js'
 
 const POKEAPI = 'https://pokeapi.co/api/v2/pokemon'
 const POKEAPI_SPECIES = 'https://pokeapi.co/api/v2/pokemon-species'
@@ -9,9 +10,9 @@ const POKEAPI_SPECIES = 'https://pokeapi.co/api/v2/pokemon-species'
 export const STARTERS = ['palkia', 'dialga', 'arceus', 'eternatus']
 
 export const BALLS = {
-  regular: { name: 'Poké Ball', chance: 0.5, start: 6, bonus: 100 },
-  legendary: { name: 'Legend Ball', chance: 0.7, start: 3, bonus: 50 },
-  master: { name: 'Master Ball', chance: 0.9, start: 1, bonus: 0 },
+  regular: { name: 'Poké Ball', chance: 0.5, start: 100, bonus: 100 },
+  legendary: { name: 'Legend Ball', chance: 0.7, start: 50, bonus: 50 },
+  master: { name: 'Master Ball', chance: 0.9, start: 15, bonus: 0 },
 }
 
 // Spawn table: rarer tiers appear less often, are stronger, and resist capture.
@@ -80,7 +81,8 @@ const NIGHT_SHINY_CHANCE = 1 / 8
 const LEVELS_PER_ELIMINATION = 2
 const MAX_LEVEL = 100
 
-// Attack type → defending types that take no damage from it.
+// Attack type → defending types that take no damage from it. Only used if the
+// PokéAPI type chart can't be loaded; normally the full chart from types.js applies.
 export const IMMUNITIES = {
   normal: ['ghost'],
   fighting: ['ghost'],
@@ -351,16 +353,38 @@ export class GameError extends Error {
   }
 }
 
-export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = fetchEvolutions, store = defaultStore() } = {}) {
+export function createGame({
+  fetchPokemon = fetchSpecies,
+  fetchNextEvolutions = fetchEvolutions,
+  fetchChart = fetchTypeChart,
+  store = defaultStore(),
+} = {}) {
   async function load(id) {
     const s = id && (await store.get(id))
     if (!s) throw new GameError('Unknown session. Start a new trial', 404)
     return s
   }
 
+  let chart = null
+  async function ensureChart() {
+    if (chart) return
+    try {
+      chart = await fetchChart()
+    } catch (err) {
+      console.error('Type chart unavailable, falling back to immunities only:', err)
+    }
+  }
+
+  // ×2, ×0.5 or ×0 for each of the defender's types. Ghost's Haunt ability passes through immunities.
+  function typeMultiplier(moveType, defender, attacker) {
+    const mult = chart ? effectiveness(chart, moveType, defender.types) : immune(moveType, defender) ? 0 : 1
+    return mult === 0 && attacker && abilityOf(attacker) === 'ghost' ? 1 : mult
+  }
+
   // Loads a session, runs an action on it, and saves it back if anything changed.
   function withSession(action) {
     return async (args) => {
+      await ensureChart()
       const s = await load(args.sessionId)
       const before = JSON.stringify(s)
       const result = await action(s, args)
@@ -453,7 +477,7 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
         .map((e) => ({ ...e, ability: TYPE_ABILITIES[e.types[0]] })),
       abilities: p.moves.map((m, i) => ({
         name: m.name, type: m.type, kind: m.kind, power: m.power, accuracy: m.accuracy,
-        pp: p.pp[i], maxPp: m.pp, noEffect: Boolean(w && m.kind !== 'heal' && immune(m.type, w)),
+        pp: p.pp[i], maxPp: m.pp, noEffect: Boolean(w && m.kind !== 'heal' && typeMultiplier(m.type, w, p) === 0),
       })),
       catchable: catchable(s),
       catchChances: w ? Object.fromEntries(Object.keys(BALLS).map((k) => [k, Math.round(catchChance(k, w) * 100)])) : null,
@@ -579,17 +603,18 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
     }
   }
 
-  // One damaging move from user to target, with abilities applied on both sides.
-  function strike(s, user, target, move, movePower, { checks = true } = {}) {
+  // One damaging move from user to target, with type matchups and abilities applied on both sides.
+  function strike(s, user, target, move, movePower, { checkAccuracy = true } = {}) {
     const ability = abilityOf(user)
     const notes = []
-    if (checks && ability !== 'ghost' && immune(move.type, target)) return { immune: true, notes }
-    if (checks && ability !== 'ghost' && Math.random() >= move.accuracy) return { miss: true, notes }
+    const typeMult = typeMultiplier(move.type, target, user)
+    if (typeMult === 0) return { immune: true, notes }
+    if (checkAccuracy && ability !== 'ghost' && Math.random() >= move.accuracy) return { miss: true, notes }
     if (target.fx.dodge) {
       target.fx.dodge = false
       return { miss: true, notes: [`${nameOf(s, target)} dodged it with Evasion!`] }
     }
-    let mult = user === s.wild ? 1 : auraBoost(s)
+    let mult = (user === s.wild ? 1 : auraBoost(s)) * typeMult
     if (ability === 'ground' && Math.random() < 0.25) {
       mult *= 1.5
       notes.push('Aftershock! The ground shook for extra damage!')
@@ -601,7 +626,7 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
     const { amount, crit } = damage(user, target, movePower, { critRate: ability === 'fighting' ? 1 / 4 : 1 / 16, mult })
     const dealt = land(s, target, amount, notes)
     afterHit(s, user, target, dealt, notes)
-    return { damage: dealt, crit, notes }
+    return { damage: dealt, crit, notes, effectiveness: typeMult, superEffective: typeMult > 1 }
   }
 
   // Paralysis, freezing and confusion can stop a Pokémon before it moves.
@@ -639,11 +664,15 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
     const helpers = [...s.party.filter((m) => m !== p && !m.fainted), ...s.box]
     if (!helpers.length) return null
     let total = 0
+    let superEffective = false
     for (const m of helpers) {
-      if (!immune(m.moves[1].type, s.wild)) total += damage(m, s.wild, ASSIST_POWER, { mult: auraBoost(s) }).amount
+      const typeMult = typeMultiplier(m.moves[1].type, s.wild, m)
+      if (typeMult === 0) continue
+      superEffective ||= typeMult > 1
+      total += damage(m, s.wild, ASSIST_POWER, { mult: auraBoost(s) * typeMult }).amount
     }
     s.wild.hp = Math.max(0, s.wild.hp - total)
-    return { actor: 'team', kind: 'team', names: helpers.map((m) => m.name), damage: total, ...hps(s) }
+    return { actor: 'team', kind: 'team', names: helpers.map((m) => m.name), damage: total, superEffective, ...hps(s) }
   }
 
   function resolveEncounter(s) {
@@ -670,7 +699,7 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
   function wildAct(s) {
     const slot = Math.random() < WILD_STRONG_CHANCE ? 1 : 0
     const move = s.wild.moves[slot]
-    const hit = strike(s, s.wild, active(s), move, WILD_MOVE_POWER[slot], { checks: false })
+    const hit = strike(s, s.wild, active(s), move, WILD_MOVE_POWER[slot], { checkAccuracy: false })
     return { actor: 'wild', ability: move.name, kind: 'wild', type: move.type, ...hit, ...hps(s) }
   }
 
@@ -754,6 +783,7 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
 
     async start({ starter }) {
       if (!STARTERS.includes(starter)) throw new GameError('Pick one of the four starters')
+      await ensureChart()
       const s = {
         id: randomUUID(),
         startedAt: Date.now(),
@@ -809,6 +839,35 @@ export function createGame({ fetchPokemon = fetchSpecies, fetchNextEvolutions = 
       if (s.phase !== 'explore') throw new GameError('Use the SWITCH menu during battle')
       requireSlot(s, slot)
       s.active = slot
+      return view(s)
+    }),
+
+    // Moves a caught Pokémon from the box into the party. With a full party it swaps with `slot`.
+    equip: withSession(async (s, { uid, slot }) => {
+      if (s.location !== 'lobby' || s.phase !== 'explore') throw new GameError('Equip Pokémon from the Pokédex in the lobby')
+      const i = s.box.findIndex((m) => m.uid === uid)
+      if (i === -1) throw new GameError('That Pokémon is not in your box')
+      const incoming = s.box[i]
+      if (s.party.length < PARTY_SIZE) {
+        s.box.splice(i, 1)
+        s.party.push(incoming)
+      } else {
+        if (!s.party[slot]) throw new GameError('Your party is full. Pick a party slot to swap with')
+        s.box[i] = s.party[slot]
+        s.party[slot] = incoming
+      }
+      return view(s)
+    }),
+
+    // Sends a party member to the box. The party always keeps at least one Pokémon.
+    unequip: withSession(async (s, { uid }) => {
+      if (s.location !== 'lobby' || s.phase !== 'explore') throw new GameError('Unequip Pokémon from the Pokédex in the lobby')
+      const i = s.party.findIndex((m) => m.uid === uid)
+      if (i === -1) throw new GameError('That Pokémon is not in your party')
+      if (s.party.length === 1) throw new GameError('Your party needs at least one Pokémon')
+      const activeUid = active(s).uid
+      s.box.push(...s.party.splice(i, 1))
+      s.active = Math.max(0, s.party.findIndex((m) => m.uid === activeUid))
       return view(s)
     }),
 
